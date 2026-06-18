@@ -53,11 +53,24 @@ Record from your mic and write raw + denoised WAVs to compare
 
 - [x] **Phase 0** — Repo scaffold, vendored RNNoise C core, Swift package
 - [x] **Phase 1** — CLI: mic/file capture → RNNoise denoise → WAV
-- [ ] **Phase 2** — Virtual "ODE Microphone" HAL device (BlackHole-based)
+- [x] **Phase 2** — Real-time streaming engine (`ode live`) + device routing + virtual-mic setup
 - [ ] **Phase 3** — SwiftUI menu-bar app (toggle, input picker)
 - [ ] **Phase 4** — Signed/notarized `.pkg` installer
 - [ ] **Phase 5** — DeepFilterNet model option for higher quality
 - [ ] **Phase 6** — Acoustic echo cancellation (WebRTC APM)
+
+## Real-time usage (Phase 2)
+
+Install the virtual microphone, then run the live denoiser into it:
+
+```sh
+./scripts/install-virtual-mic.sh         # installs a loopback device
+ode live --out "BlackHole 2ch"           # mic -> denoise -> virtual device
+# pick that device as your mic in Zoom/Teams/Discord/browser
+```
+
+`ode devices` lists everything CoreAudio sees. See `docs/VIRTUAL_MIC.md` for
+the branded "ODE Microphone" build.
 
 ## Project layout
 
@@ -69,7 +82,13 @@ Sources/
     Denoiser.swift     RNNoise wrapper
     AudioIO.swift      WAV read/write + resampling to 48 kHz mono
     MicRecorder.swift  AVAudioEngine mic capture
+    AudioDevices.swift CoreAudio device enumeration
+    LiveEngine.swift   Real-time capture -> denoise -> device routing
     main.swift         CLI entry point
+scripts/
+  install-virtual-mic.sh   Installs a loopback device (BlackHole)
+docs/
+  VIRTUAL_MIC.md           Virtual-microphone setup & branded build
 ```
 
 ## Licensing & attribution

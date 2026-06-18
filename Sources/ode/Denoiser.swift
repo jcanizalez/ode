@@ -42,4 +42,34 @@ final class Denoiser {
         }
         return out
     }
+
+    // MARK: - Streaming
+
+    private var inResidual: [Float] = []
+
+    /// Streaming denoise: accepts arbitrary-length chunks across calls,
+    /// buffering partial frames so RNNoise always sees complete `frameSize`
+    /// frames. RNNoise's internal recurrent state is preserved between calls,
+    /// which is exactly what continuous real-time audio needs.
+    /// Returns only the samples that completed full frames this call.
+    func processStreaming(_ chunk: [Float]) -> [Float] {
+        inResidual.append(contentsOf: chunk)
+        guard inResidual.count >= frameSize else { return [] }
+
+        let fullFrames = inResidual.count / frameSize
+        let usable = fullFrames * frameSize
+        var out = [Float](repeating: 0, count: usable)
+        var frameIn = [Float](repeating: 0, count: frameSize)
+        var frameOut = [Float](repeating: 0, count: frameSize)
+
+        var i = 0
+        while i + frameSize <= usable {
+            for j in 0..<frameSize { frameIn[j] = inResidual[i + j] * 32768.0 }
+            _ = rnnoise_process_frame(state, &frameOut, &frameIn)
+            for j in 0..<frameSize { out[i + j] = frameOut[j] / 32768.0 }
+            i += frameSize
+        }
+        inResidual.removeFirst(usable)
+        return out
+    }
 }

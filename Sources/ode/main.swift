@@ -18,9 +18,20 @@ func usage() {
       ode mic <seconds> <raw.wav> <clean.wav>
           Record from the default mic, write raw and denoised WAVs to compare.
 
+      ode devices
+          List CoreAudio input/output devices.
+
+      ode live [--out "<device name>"]
+          Real-time loop: capture mic -> denoise -> play to a device.
+          With --out, routes clean audio into that device (e.g. "ODE Microphone").
+          Without --out, monitors to the default output (use headphones).
+          Press Ctrl-C to stop.
+
     EXAMPLES:
       ode file noisy.wav clean.wav
       ode mic 8 raw.wav clean.wav
+      ode devices
+      ode live --out "ODE Microphone"
     """)
 }
 
@@ -69,6 +80,70 @@ case "mic":
         print("Error: \(error)")
         exit(1)
     }
+
+case "devices":
+    let devs = AudioDevices.all()
+    let defOut = AudioDevices.defaultOutput()?.id
+    let defIn = AudioDevices.defaultInput()?.id
+    print("CoreAudio devices:")
+    for d in devs {
+        var tags: [String] = []
+        if d.hasInput { tags.append("in") }
+        if d.hasOutput { tags.append("out") }
+        if d.id == defIn { tags.append("DEFAULT-IN") }
+        if d.id == defOut { tags.append("DEFAULT-OUT") }
+        print("  • \(d.name)  [\(tags.joined(separator: ","))]")
+    }
+
+case "live":
+    var outName: String? = nil
+    var autoSeconds: Double? = nil
+    if let idx = args.firstIndex(of: "--out"), idx + 1 < args.count {
+        outName = args[idx + 1]
+    }
+    if let idx = args.firstIndex(of: "--seconds"), idx + 1 < args.count {
+        autoSeconds = Double(args[idx + 1])
+    }
+    var target: AudioDevices.Device? = nil
+    if let name = outName {
+        guard let dev = AudioDevices.find(name: name) else {
+            print("Output device not found: \(name)")
+            print("Run 'ode devices' to list available devices.")
+            exit(1)
+        }
+        guard dev.hasOutput else {
+            print("Device '\(dev.name)' has no output channels.")
+            exit(1)
+        }
+        target = dev
+        print("Routing denoised audio -> \(dev.name)")
+    } else {
+        print("Monitoring denoised audio on default output (use headphones to avoid feedback).")
+    }
+    let engine = LiveEngine()
+    do {
+        try engine.start(outputDevice: target)
+    } catch {
+        print("Failed to start live engine: \(error.localizedDescription)")
+        exit(1)
+    }
+    signal(SIGINT, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    src.setEventHandler {
+        print("\nStopping…")
+        engine.stop()
+        exit(0)
+    }
+    src.resume()
+    print("ODE live denoise running. Press Ctrl-C to stop.")
+    if let secs = autoSeconds {
+        DispatchQueue.main.asyncAfter(deadline: .now() + secs) {
+            print("Auto-stop after \(secs)s")
+            engine.stop()
+            exit(0)
+        }
+    }
+    dispatchMain()
 
 default:
     usage()
