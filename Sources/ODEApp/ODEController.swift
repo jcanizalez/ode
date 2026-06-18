@@ -28,10 +28,16 @@ final class ODEController: ObservableObject {
     @Published var outputDevices: [AudioDevices.Device] = []
     @Published var selectedOutputID: AudioDeviceID?
 
+    // Transcription
+    @Published var transcribeEnabled = false
+    @Published var transcribing = false
+
     private let micEngine = LiveEngine()
     private let speakerEngine = LiveEngine()
     private var micObserver: AudioDevices.UsageObserver?
     private var speakerObserver: AudioDevices.UsageObserver?
+
+    private var meetingTranscriber: Any?  // MeetingTranscriber (macOS 26+)
 
     init() {
         refreshDevices()
@@ -111,6 +117,11 @@ final class ODEController: ObservableObject {
         reconcileSpeaker()
     }
 
+    func toggleTranscribe() {
+        transcribeEnabled.toggle()
+        reconcileTranscription()
+    }
+
     func selectInput(_ id: AudioDeviceID) {
         selectedInputID = id
         if micActive { micEngine.stop(); micActive = false }
@@ -166,6 +177,7 @@ final class ODEController: ObservableObject {
         } else if micActive {
             micEngine.bypassDenoise = !micEnabled
         }
+        reconcileTranscription()
     }
 
     /// Speaker path runs whenever an app plays into the ODE Speaker.
@@ -188,6 +200,56 @@ final class ODEController: ObservableObject {
             speakerEngine.stop(); speakerActive = false
         } else if speakerActive {
             speakerEngine.bypassDenoise = !speakerEnabled
+        }
+        reconcileTranscription()
+    }
+
+    // MARK: - Transcription
+
+    /// Transcribe whenever the setting is on and a call is active on either path.
+    private func reconcileTranscription() {
+        guard #available(macOS 26.0, *) else { return }
+        let inCall = micActive || speakerActive
+        let shouldTranscribe = transcribeEnabled && inCall
+
+        if shouldTranscribe && !transcribing {
+            startTranscription()
+        } else if !shouldTranscribe && transcribing {
+            stopTranscription()
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private func startTranscription() {
+        let mt = MeetingTranscriber()
+        meetingTranscriber = mt
+        transcribing = true
+
+        // Forward captured audio from each engine to the matching transcriber.
+        micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
+        speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
+
+        Task {
+            do {
+                try await MeetingTranscriber.ensureModel()
+                try await mt.start()
+            } catch {
+                NSLog("ODE: transcription start failed: \(error.localizedDescription)")
+                await MainActor.run { self.transcribing = false }
+            }
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private func stopTranscription() {
+        transcribing = false
+        micEngine.onCapturedAudio = nil
+        speakerEngine.onCapturedAudio = nil
+        guard let mt = meetingTranscriber as? MeetingTranscriber else { return }
+        meetingTranscriber = nil
+        Task {
+            await mt.finishAndSave()
+            await MainActor.run { self.objectWillChange.send() }
         }
     }
 

@@ -36,6 +36,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSUIElement</key>             <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>ODE needs the microphone to remove background noise in real time.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>ODE transcribes meetings on-device so you can keep searchable notes.</string>
     <key>NSHighResolutionCapable</key> <true/>
 </dict>
 </plist>

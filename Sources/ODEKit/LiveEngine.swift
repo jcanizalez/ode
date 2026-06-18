@@ -61,6 +61,10 @@ public final class LiveEngine {
 
     public init() {}
 
+    /// Optional sink for captured audio (post-resample, 48 kHz mono), used for
+    /// transcription. Receives the same audio that is denoised/played.
+    public var onCapturedAudio: ((AVAudioPCMBuffer) -> Void)?
+
     /// Start the loop. Captures from `inputDevice` (a real mic) and writes the
     /// denoised result to `outputDevice` (the virtual mic). Passing nil uses the
     /// system defaults. Guards against capturing from the same device we write
@@ -101,6 +105,7 @@ public final class LiveEngine {
         }
         let inFormat = input.inputFormat(forBus: 0)
         input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, weak self] buffer, _ in
+            self?.onCapturedAudio?(buffer)
             let mono = AudioIO.resampleToMono48k(buffer)
             if self?.bypassDenoise == true {
                 // Pass audio through untouched so the call still hears you,

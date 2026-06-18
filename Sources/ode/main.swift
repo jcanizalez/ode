@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import ODEKit
 
 func rms(_ s: [Float]) -> Float {
@@ -163,6 +164,41 @@ case "watch":
     }
     if obs == nil { print("  (failed to install observer)") }
     dispatchMain()
+
+case "transcribe":
+    // Debug: transcribe a WAV file and print timestamped segments.
+    guard args.count >= 3 else { print("usage: ode transcribe <audio.wav>"); exit(1) }
+    let url = URL(fileURLWithPath: args[2])
+    if #available(macOS 26.0, *) {
+        let sema = DispatchSemaphore(value: 0)
+        Task {
+            do {
+                print("Ensuring transcription model…")
+                try await StreamTranscriber.ensureModel()
+                let t = StreamTranscriber()
+                t.onSegment = { seg in
+                    print(String(format: "[%6.2f–%6.2f] %@", seg.start, seg.end, seg.text))
+                }
+                try await t.start()
+                let file = try AVAudioFile(forReading: url)
+                let fmt = file.processingFormat
+                let frames = AVAudioFrameCount(file.length)
+                if let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) {
+                    try file.read(into: buf)
+                    t.append(buf)
+                }
+                await t.finish()
+                print("--- done ---")
+            } catch {
+                print("Error: \(error.localizedDescription)")
+            }
+            sema.signal()
+        }
+        sema.wait()
+    } else {
+        print("Transcription requires macOS 26+.")
+        exit(1)
+    }
 
 default:
     usage()

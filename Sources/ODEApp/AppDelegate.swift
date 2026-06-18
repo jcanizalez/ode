@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private let controller = ODEController()
     private var abController: ABTestWindowController?
+    private var notesController: MeetingNotesWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -19,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = PanelView(
             controller: controller,
             onTest: { [weak self] in self?.openABTest() },
+            onNotes: { [weak self] in self?.openNotes() },
             onQuit: { [weak self] in self?.quit() }
         )
         let hosting = NSHostingController(rootView: panel)
@@ -71,6 +73,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         abController?.showWindow(nil)
         abController?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func openNotes() {
+        popover.performClose(nil)
+        // Recreate so the list reflects newly saved transcripts.
+        notesController = MeetingNotesWindowController()
+        NSApp.activate(ignoringOtherApps: true)
+        notesController?.showWindow(nil)
+        notesController?.window?.makeKeyAndOrderFront(nil)
     }
 
     private func quit() {
