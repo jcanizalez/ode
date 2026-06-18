@@ -17,6 +17,7 @@ echo "Assembling app bundle at $APP ..."
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
 cp ".build/release/ODEApp" "$MACOS/ODE"
+cp "Resources/dpdfnet2_48khz_hr.onnx" "$RES/"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

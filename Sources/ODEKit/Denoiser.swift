@@ -1,75 +1,123 @@
-import CRNNoise
+import Foundation
+import CSherpa
 
-/// Thin Swift wrapper over RNNoise.
-/// RNNoise operates on 48 kHz mono frames of `frameSize` samples,
-/// expressed as floats in int16 scale (roughly -32768...32767).
+/// Locates the bundled DPDFNet model in both app-bundle and dev/CLI contexts.
+enum ModelLocator {
+    static func dpdfnetPath() -> String? {
+        let name = "dpdfnet2_48khz_hr"
+        let ext = "onnx"
+
+        // 1. Inside an .app bundle (Resources/)
+        if let url = Bundle.main.url(forResource: name, withExtension: ext) {
+            return url.path
+        }
+
+        let fm = FileManager.default
+        var candidates: [String] = []
+
+        // Environment override takes priority.
+        if let env = ProcessInfo.processInfo.environment["ODE_MODEL_PATH"] {
+            candidates.append(env)
+        }
+
+        // Next to the executable, and in Resources/ walking up from it.
+        let exeDir = URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
+        candidates.append(exeDir.appendingPathComponent("\(name).\(ext)").path)
+        var dir = exeDir
+        for _ in 0..<6 {
+            candidates.append(dir.appendingPathComponent("Resources/\(name).\(ext)").path)
+            dir.deleteLastPathComponent()
+        }
+
+        return candidates.first { fm.fileExists(atPath: $0) }
+    }
+}
+
+/// Real-time speech denoiser backed by DPDFNet (via sherpa-onnx).
+/// Replaces the earlier RNNoise implementation; the public API is unchanged so
+/// callers (CLI, live engine, A/B tester) work without modification.
+///
+/// DPDFNet runs at 48 kHz full-band and preserves speech naturalness far better
+/// than RNNoise while removing substantially more background noise.
 public final class Denoiser {
-    private let state: OpaquePointer
-    public let frameSize: Int
+    private let offline: OpaquePointer?
+    private let online: OpaquePointer?
+    private let modelPathC: [CChar]
+
+    /// Frame granularity hint (kept for API compatibility with callers).
+    public let frameSize: Int = 480 // 10 ms @ 48 kHz
 
     public init() {
-        self.state = rnnoise_create(nil)
-        self.frameSize = Int(rnnoise_get_frame_size())
+        guard let path = ModelLocator.dpdfnetPath() else {
+            fatalError("ODE: DPDFNet model not found. Expected "
+                       + "Resources/dpdfnet2_48khz_hr.onnx next to the executable or in the "
+                       + "app bundle. Set ODE_MODEL_PATH to override.")
+        }
+        modelPathC = path.cString(using: .utf8) ?? []
+
+        offline = modelPathC.withUnsafeBufferPointer { buf in
+            var cfg = SherpaOnnxOfflineSpeechDenoiserConfig()
+            cfg.model.dpdfnet.model = buf.baseAddress
+            cfg.model.num_threads = 2
+            cfg.model.provider = ("cpu" as NSString).utf8String
+            return SherpaOnnxCreateOfflineSpeechDenoiser(&cfg)
+        }
+
+        online = modelPathC.withUnsafeBufferPointer { buf in
+            var cfg = SherpaOnnxOnlineSpeechDenoiserConfig()
+            cfg.model.dpdfnet.model = buf.baseAddress
+            cfg.model.num_threads = 1
+            cfg.model.provider = ("cpu" as NSString).utf8String
+            return SherpaOnnxCreateOnlineSpeechDenoiser(&cfg)
+        }
     }
 
     deinit {
-        rnnoise_destroy(state)
+        if let o = offline { SherpaOnnxDestroyOfflineSpeechDenoiser(o) }
+        if let o = online { SherpaOnnxDestroyOnlineSpeechDenoiser(o) }
     }
 
-    /// Denoise a full buffer of normalized mono samples ([-1, 1], 48 kHz).
-    /// Returns a new buffer of the same length. Trailing samples that do not
-    /// fill a complete frame are passed through unprocessed.
+    /// Offline denoise of a complete 48 kHz mono buffer ([-1, 1]).
     public func process(_ samples: [Float]) -> [Float] {
-        var out = [Float](repeating: 0, count: samples.count)
-        var frameIn = [Float](repeating: 0, count: frameSize)
-        var frameOut = [Float](repeating: 0, count: frameSize)
-
-        var i = 0
-        while i + frameSize <= samples.count {
-            for j in 0..<frameSize {
-                frameIn[j] = samples[i + j] * 32768.0
-            }
-            _ = rnnoise_process_frame(state, &frameOut, &frameIn)
-            for j in 0..<frameSize {
-                out[i + j] = frameOut[j] / 32768.0
-            }
-            i += frameSize
+        guard let offline, !samples.isEmpty else { return samples }
+        let result = samples.withUnsafeBufferPointer { buf in
+            SherpaOnnxOfflineSpeechDenoiserRun(offline, buf.baseAddress, Int32(buf.count),
+                                               Int32(AudioIO.sampleRate))
         }
-        // copy any remainder through untouched
-        while i < samples.count {
-            out[i] = samples[i]
-            i += 1
-        }
-        return out
+        return Self.collect(result)
     }
 
-    // MARK: - Streaming
-
-    private var inResidual: [Float] = []
-
-    /// Streaming denoise: accepts arbitrary-length chunks across calls,
-    /// buffering partial frames so RNNoise always sees complete `frameSize`
-    /// frames. RNNoise's internal recurrent state is preserved between calls,
-    /// which is exactly what continuous real-time audio needs.
-    /// Returns only the samples that completed full frames this call.
+    /// Streaming denoise: feed arbitrary-length 48 kHz chunks across calls;
+    /// returns whatever denoised output is ready this call.
     public func processStreaming(_ chunk: [Float]) -> [Float] {
-        inResidual.append(contentsOf: chunk)
-        guard inResidual.count >= frameSize else { return [] }
-
-        let fullFrames = inResidual.count / frameSize
-        let usable = fullFrames * frameSize
-        var out = [Float](repeating: 0, count: usable)
-        var frameIn = [Float](repeating: 0, count: frameSize)
-        var frameOut = [Float](repeating: 0, count: frameSize)
-
-        var i = 0
-        while i + frameSize <= usable {
-            for j in 0..<frameSize { frameIn[j] = inResidual[i + j] * 32768.0 }
-            _ = rnnoise_process_frame(state, &frameOut, &frameIn)
-            for j in 0..<frameSize { out[i + j] = frameOut[j] / 32768.0 }
-            i += frameSize
+        guard let online, !chunk.isEmpty else { return [] }
+        let result = chunk.withUnsafeBufferPointer { buf in
+            SherpaOnnxOnlineSpeechDenoiserRun(online, buf.baseAddress, Int32(buf.count),
+                                              Int32(AudioIO.sampleRate))
         }
-        inResidual.removeFirst(usable)
+        return Self.collect(result)
+    }
+
+    /// Flush any buffered streaming audio (call when stopping a live session).
+    public func flushStreaming() -> [Float] {
+        guard let online else { return [] }
+        return Self.collect(SherpaOnnxOnlineSpeechDenoiserFlush(online))
+    }
+
+    // MARK: - Helpers
+
+    private static func collect(_ result: UnsafePointer<SherpaOnnxDenoisedAudio>?) -> [Float] {
+        guard let result else { return [] }
+        let audio = result.pointee
+        let n = Int(audio.n)
+        let out: [Float]
+        if n > 0, let s = audio.samples {
+            out = Array(UnsafeBufferPointer(start: s, count: n))
+        } else {
+            out = []
+        }
+        SherpaOnnxDestroyDenoisedAudio(result)
         return out
     }
 }

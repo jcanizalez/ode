@@ -12,8 +12,8 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
-This product bundles RNNoise (https://github.com/xiph/rnnoise), which is
-licensed under the BSD 3-Clause License. See Sources/CRNNoise/COPYING.
+This product uses sherpa-onnx (https://github.com/k2-fsa/sherpa-onnx, Apache-2.0)
+for DPDFNet speech enhancement, which embeds ONNX Runtime (MIT).
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

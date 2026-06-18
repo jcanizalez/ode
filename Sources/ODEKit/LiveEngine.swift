@@ -90,6 +90,7 @@ public final class LiveEngine {
     public func stop() {
         captureEngine.inputNode.removeTap(onBus: 0)
         captureEngine.stop()
+        _ = denoiser.flushStreaming()
         playbackEngine.stop()
     }
 

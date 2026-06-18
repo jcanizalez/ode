@@ -3,3 +3,7 @@
 *.wav
 DerivedData/
 dist/
+
+# Large binary dependencies — run scripts/fetch-deps.sh to restore
+third_party/sherpa/lib/*.a
+Resources/*.onnx
