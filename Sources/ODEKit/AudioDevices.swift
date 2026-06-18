@@ -45,6 +45,67 @@ public enum AudioDevices {
         deviceFor(selector: kAudioHardwarePropertyDefaultInputDevice)
     }
 
+    // MARK: - Device usage observation
+
+    /// Whether the device's **input** is currently in use by any process.
+    /// Backed by `kAudioDevicePropertyDeviceIsRunningSomewhere`, scoped to the
+    /// input side so that our own writes to the device's output (when routing
+    /// denoised audio) do not count as usage — only an app *reading* the
+    /// virtual microphone does. This is how we detect that e.g. Zoom opened it.
+    public static func isInputInUse(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr else {
+            return false
+        }
+        return value != 0
+    }
+
+    /// Observes input-usage changes for a device. The handler is invoked on a
+    /// background CoreAudio queue whenever usage changes; returns a token that
+    /// must be retained and passed to `removeUsageObserver` to stop.
+    public final class UsageObserver {
+        let id: AudioDeviceID
+        let block: AudioObjectPropertyListenerBlock
+        var addr: AudioObjectPropertyAddress
+
+        init(id: AudioDeviceID, block: @escaping AudioObjectPropertyListenerBlock,
+             addr: AudioObjectPropertyAddress) {
+            self.id = id
+            self.block = block
+            self.addr = addr
+        }
+    }
+
+    public static func addUsageObserver(_ id: AudioDeviceID,
+                                        onChange: @escaping (Bool) -> Void) -> UsageObserver? {
+        // Register on the GLOBAL scope: CoreAudio posts IsRunningSomewhere change
+        // notifications there. We still *read* the input scope in the handler so
+        // our own writes to the device's output (when routing denoised audio) do
+        // not register as microphone usage.
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let block: AudioObjectPropertyListenerBlock = { _, _ in
+            onChange(isInputInUse(id))
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            id, &addr, DispatchQueue.global(qos: .userInitiated), block)
+        guard status == noErr else { return nil }
+        return UsageObserver(id: id, block: block, addr: addr)
+    }
+
+    public static func removeUsageObserver(_ observer: UsageObserver) {
+        var addr = observer.addr
+        AudioObjectRemovePropertyListenerBlock(
+            observer.id, &addr, DispatchQueue.global(qos: .userInitiated), observer.block)
+    }
+
     // MARK: - private
 
     private static func deviceFor(selector: AudioObjectPropertySelector) -> Device? {

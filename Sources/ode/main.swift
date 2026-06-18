@@ -146,6 +146,22 @@ case "live":
     }
     dispatchMain()
 
+case "watch":
+    // Debug: report input-usage of a device and observe changes.
+    guard args.count >= 3 else { print("usage: ode watch \"<device name>\""); exit(1) }
+    guard let dev = AudioDevices.find(name: args[2]) else {
+        print("Device not found: \(args[2])"); exit(1)
+    }
+    print("Watching input usage of '\(dev.name)' (id \(dev.id)). Ctrl-C to stop.")
+    print("  initial isInputInUse = \(AudioDevices.isInputInUse(dev.id))")
+    setvbuf(stdout, nil, _IONBF, 0)
+    let obs = AudioDevices.addUsageObserver(dev.id) { inUse in
+        print("  [\(Date())] isInputInUse -> \(inUse)")
+        fflush(stdout)
+    }
+    if obs == nil { print("  (failed to install observer)") }
+    dispatchMain()
+
 default:
     usage()
     exit(1)
