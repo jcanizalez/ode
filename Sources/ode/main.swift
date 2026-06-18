@@ -122,8 +122,10 @@ case "live":
         print("Monitoring denoised audio on default output (use headphones to avoid feedback).")
     }
     let engine = LiveEngine()
+    let bypass = args.contains("--bypass")
+    if bypass { print("Bypass mode: passing audio through WITHOUT denoising.") }
     do {
-        try engine.start(outputDevice: target)
+        try engine.start(outputDevice: target, bypass: bypass)
     } catch {
         print("Failed to start live engine: \(error.localizedDescription)")
         exit(1)

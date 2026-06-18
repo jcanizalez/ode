@@ -50,12 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateIcon() {
         guard let button = statusItem.button else { return }
-        let symbol = controller.isActive ? "waveform.circle.fill" : "waveform.circle"
+        let denoising = controller.isActive && controller.isEnabled
+        let symbol = denoising ? "waveform.circle.fill" : "waveform.circle"
         if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "ODE") {
             img.isTemplate = true
             button.image = img
         } else {
-            button.title = controller.isActive ? "ODE•" : "ODE"
+            button.title = denoising ? "ODE•" : "ODE"
         }
     }
 

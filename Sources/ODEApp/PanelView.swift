@@ -40,13 +40,13 @@ struct PanelView: View {
         HStack(spacing: 10) {
             ZStack {
                 Circle()
-                    .fill(controller.isActive
+                    .fill(controller.isEnabled
                           ? Color.accentColor.opacity(0.9)
                           : Color.white.opacity(0.12))
                     .frame(width: 30, height: 30)
                 Image(systemName: "waveform")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(controller.isActive ? Color.white : Color.white.opacity(0.7))
+                    .foregroundStyle(controller.isEnabled ? Color.white : Color.white.opacity(0.7))
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text("ODE")
@@ -54,7 +54,7 @@ struct PanelView: View {
                     .foregroundStyle(.white)
                 Text(controller.statusText)
                     .font(.system(size: 11))
-                    .foregroundStyle(controller.isActive
+                    .foregroundStyle((controller.isActive && controller.isEnabled)
                                      ? Color.accentColor
                                      : Color.white.opacity(0.45))
             }
@@ -80,12 +80,12 @@ struct PanelView: View {
 
     private var deviceCard: some View {
         card {
-            sectionTitle("ODE Microphone")
+            sectionTitle("Your Microphone")
             Menu {
-                let currentID = controller.selectedOutputID
-                ForEach(controller.outputDevices, id: \.id) { dev in
+                let currentID = controller.selectedInputID
+                ForEach(controller.inputDevices, id: \.id) { dev in
                     Button {
-                        controller.selectOutput(dev.id)
+                        controller.selectInput(dev.id)
                     } label: {
                         if dev.id == currentID {
                             Label(dev.name, systemImage: "checkmark")
@@ -96,10 +96,10 @@ struct PanelView: View {
                 }
             } label: {
                 HStack {
-                    Image(systemName: "speaker.wave.2.fill")
+                    Image(systemName: "mic.fill")
                         .font(.system(size: 12))
                         .foregroundStyle(.white.opacity(0.7))
-                    Text(controller.selectedOutput?.name ?? "Select output…")
+                    Text(controller.selectedInput?.name ?? "Select a microphone…")
                         .font(.system(size: 13))
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -120,6 +120,16 @@ struct PanelView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+
+            if !controller.virtualMicInstalled {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                    Text("ODE Microphone not installed — run the installer")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.orange.opacity(0.85))
+            }
         }
     }
 

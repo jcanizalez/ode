@@ -7,20 +7,25 @@ import ODEKit
 /// The toggle is only a *setting* (`isEnabled`). The engine actually captures
 /// the real microphone and denoises **only when an app opens the ODE virtual
 /// microphone** — so there is no recording indicator when idle.
+///
+/// Conceptually: ODE always *outputs* to the "ODE Microphone" virtual device;
+/// the user only chooses which real **input** microphone to capture from.
 final class ODEController: ObservableObject {
     /// User setting: is noise cancellation armed?
     @Published var isEnabled = false
     /// Is the engine actively processing right now (an app is using the mic)?
     @Published var isActive = false
-    @Published var outputDevices: [AudioDevices.Device] = []
-    @Published var selectedOutputID: AudioDeviceID?
+    /// Real input microphones the user can capture from.
+    @Published var inputDevices: [AudioDevices.Device] = []
+    /// The chosen real input mic.
+    @Published var selectedInputID: AudioDeviceID?
 
     private let engine = LiveEngine()
     private var usageObserver: AudioDevices.UsageObserver?
 
     init() {
         refreshDevices()
-        selectedOutputID = preferredVirtualDevice()?.id
+        selectedInputID = preferredInputDevice()?.id
         installUsageObserver()
     }
 
@@ -28,33 +33,47 @@ final class ODEController: ObservableObject {
         if let o = usageObserver { AudioDevices.removeUsageObserver(o) }
     }
 
-    var selectedOutput: AudioDevices.Device? {
-        outputDevices.first { $0.id == selectedOutputID }
+    /// The fixed virtual output device ("ODE Microphone"). ODE always writes
+    /// denoised audio here; apps select it as their microphone.
+    var virtualMic: AudioDevices.Device? {
+        let outs = AudioDevices.all().filter { $0.hasOutput }
+        return outs.first { $0.name.localizedCaseInsensitiveContains("ode microphone") }
+            ?? outs.first { $0.name.localizedCaseInsensitiveContains("blackhole") }
+    }
+
+    var virtualMicInstalled: Bool { virtualMic != nil }
+
+    var selectedInput: AudioDevices.Device? {
+        inputDevices.first { $0.id == selectedInputID }
     }
 
     var statusText: String {
-        if !isEnabled { return "Off" }
-        return isActive ? "Removing noise" : "On · waiting for a call"
+        if !virtualMicInstalled { return "Install the ODE Microphone to begin" }
+        if isActive {
+            return isEnabled ? "Removing noise" : "Passing through (noise on)"
+        }
+        return isEnabled ? "On · waiting for a call" : "Off · waiting for a call"
     }
 
     func refreshDevices() {
-        outputDevices = AudioDevices.all().filter { $0.hasOutput }
-        if selectedOutputID == nil || !outputDevices.contains(where: { $0.id == selectedOutputID }) {
-            selectedOutputID = preferredVirtualDevice()?.id
+        // Only real microphones — never the virtual ODE Microphone / loopbacks.
+        inputDevices = AudioDevices.all().filter { $0.hasInput && !isLoopback($0) }
+        if selectedInputID == nil || !inputDevices.contains(where: { $0.id == selectedInputID }) {
+            selectedInputID = preferredInputDevice()?.id
         }
     }
 
-    /// Flip the setting. This never directly touches the mic — it only arms or
-    /// disarms; `reconcile()` starts/stops the engine based on actual usage.
+    /// Flip the noise-cancellation setting. Audio keeps flowing either way;
+    /// this only switches between denoised and raw passthrough.
     func toggle() {
         isEnabled.toggle()
+        engine.bypassDenoise = !isEnabled
         reconcile()
     }
 
-    func selectOutput(_ id: AudioDeviceID) {
-        selectedOutputID = id
-        installUsageObserver()   // watch the newly selected virtual device
-        if isActive {            // re-route an in-progress session
+    func selectInput(_ id: AudioDeviceID) {
+        selectedInputID = id
+        if isActive {            // re-capture from the newly chosen mic
             engine.stop()
             isActive = false
         }
@@ -69,36 +88,49 @@ final class ODEController: ObservableObject {
 
     private func installUsageObserver() {
         if let o = usageObserver { AudioDevices.removeUsageObserver(o); usageObserver = nil }
-        guard let dev = selectedOutput else { return }
+        guard let dev = virtualMic else { return }
         usageObserver = AudioDevices.addUsageObserver(dev.id) { [weak self] _ in
             DispatchQueue.main.async { self?.reconcile() }
         }
     }
 
-    /// Start or stop the engine so that:
-    ///   engine active  ⟺  (setting enabled)  AND  (an app is using the mic)
+    /// Start or stop the engine so that audio flows whenever an app is using the
+    /// ODE Microphone. The "Cancel my noise" toggle only switches between
+    /// denoised and raw passthrough — it never silences the mic.
     private func reconcile() {
-        guard let dev = selectedOutput else { return }
-        let inUse = AudioDevices.isInputInUse(dev.id)
-        let shouldRun = isEnabled && inUse
+        guard let out = virtualMic else { return }
+        let inUse = AudioDevices.isInputInUse(out.id)
 
-        if shouldRun && !isActive {
+        if inUse && !isActive {
+            guard let input = selectedInput, input.id != out.id else {
+                NSLog("ODE: no valid input microphone selected.")
+                return
+            }
             do {
-                try engine.start(outputDevice: dev)
+                try engine.start(inputDevice: input, outputDevice: out, bypass: !isEnabled)
                 isActive = true
             } catch {
                 isActive = false
                 NSLog("ODE: failed to start engine: \(error.localizedDescription)")
             }
-        } else if !shouldRun && isActive {
+        } else if !inUse && isActive {
             engine.stop()
             isActive = false
+        } else if isActive {
+            // Already running — just keep bypass in sync with the toggle.
+            engine.bypassDenoise = !isEnabled
         }
     }
 
-    private func preferredVirtualDevice() -> AudioDevices.Device? {
-        outputDevices.first { $0.name.localizedCaseInsensitiveContains("ode") }
-            ?? outputDevices.first { $0.name.localizedCaseInsensitiveContains("blackhole") }
-            ?? AudioDevices.defaultOutput()
+    private func preferredInputDevice() -> AudioDevices.Device? {
+        if let def = AudioDevices.defaultInput(), !isLoopback(def), def.hasInput {
+            return def
+        }
+        return inputDevices.first
+    }
+
+    private func isLoopback(_ d: AudioDevices.Device) -> Bool {
+        let n = d.name.lowercased()
+        return n.contains("ode microphone") || n.contains("blackhole")
     }
 }
