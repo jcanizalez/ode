@@ -65,6 +65,25 @@ public final class LiveEngine {
     /// transcription. Receives the same audio that is denoised/played.
     public var onCapturedAudio: ((AVAudioPCMBuffer) -> Void)?
 
+    /// Smoothed input level in 0...1, updated from the capture tap. Read this
+    /// for a live audio meter. Resets to 0 when the engine stops.
+    private var levelLock = os_unfair_lock()
+    private var _level: Float = 0
+    public var currentLevel: Float {
+        get { os_unfair_lock_lock(&levelLock); defer { os_unfair_lock_unlock(&levelLock) }; return _level }
+    }
+    private func updateLevel(_ mono: [Float]) {
+        guard !mono.isEmpty else { return }
+        var sum: Float = 0
+        for v in mono { sum += v * v }
+        let rms = (sum / Float(mono.count)).squareRoot()
+        // Map RMS to a perceptual 0...1 with a little headroom, then smooth.
+        let scaled = min(1, rms * 6)
+        os_unfair_lock_lock(&levelLock)
+        _level = _level * 0.7 + scaled * 0.3
+        os_unfair_lock_unlock(&levelLock)
+    }
+
     /// Start the loop. Captures from `inputDevice` (a real mic) and writes the
     /// denoised result to `outputDevice` (the virtual mic). Passing nil uses the
     /// system defaults. Guards against capturing from the same device we write
@@ -107,6 +126,7 @@ public final class LiveEngine {
         input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, weak self] buffer, _ in
             self?.onCapturedAudio?(buffer)
             let mono = AudioIO.resampleToMono48k(buffer)
+            self?.updateLevel(mono)
             if self?.bypassDenoise == true {
                 // Pass audio through untouched so the call still hears you,
                 // just without noise removal.
@@ -128,6 +148,7 @@ public final class LiveEngine {
         captureEngine.stop()
         _ = denoiser.flushStreaming()
         playbackEngine.stop()
+        os_unfair_lock_lock(&levelLock); _level = 0; os_unfair_lock_unlock(&levelLock)
     }
 
     /// Route an AVAudioEngine's output to a specific CoreAudio device.

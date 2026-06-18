@@ -2,7 +2,7 @@ import SwiftUI
 import CoreAudio
 import ODEKit
 
-/// Glass control panel for ODE — editorial-precision layout.
+/// ODE glass control panel — card-based layout with live audio meters.
 struct PanelView: View {
     @ObservedObject var controller: ODEController
     var onTest: () -> Void
@@ -13,10 +13,7 @@ struct PanelView: View {
         Group {
             if #available(macOS 26.0, *) {
                 content
-                    .background(
-                        RoundedRectangle(cornerRadius: 22)
-                            .fill(Color.black.opacity(0.5))
-                    )
+                    .background(RoundedRectangle(cornerRadius: 22).fill(Color.black.opacity(0.5)))
                     .glassEffect(.regular, in: .rect(cornerRadius: 22))
             } else {
                 content.background(legacyGlassBackground)
@@ -25,386 +22,191 @@ struct PanelView: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(spacing: 14) {
             header
-            voiceTiles
-            devicesBlock
-            meetingsRow
+            VStack(alignment: .leading, spacing: 8) {
+                Text("NOISE CANCELLATION")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(.white.opacity(0.4))
+                HStack(spacing: 12) {
+                    voiceCard(
+                        title: "You", subtitle: "Cancel my noise", icon: "mic.fill",
+                        enabled: controller.micEnabled, active: controller.micActive,
+                        installed: controller.virtualMicInstalled, level: controller.micLevel
+                    ) { controller.toggleMic() }
+                    voiceCard(
+                        title: "Others", subtitle: "Cancel their noise", icon: "speaker.wave.2.fill",
+                        enabled: controller.speakerEnabled, active: controller.speakerActive,
+                        installed: controller.virtualSpeakerInstalled, level: controller.othersLevel
+                    ) { controller.toggleSpeaker() }
+                }
+            }
+            HStack(spacing: 12) {
+                DevicePicker(
+                    label: "Microphone", current: controller.selectedInput?.name,
+                    devices: controller.inputDevices, selectedID: controller.selectedInputID
+                ) { controller.selectInput($0) }
+                DevicePicker(
+                    label: "Speaker", current: controller.selectedOutput?.name,
+                    devices: controller.outputDevices, selectedID: controller.selectedOutputID
+                ) { controller.selectOutput($0) }
+            }
+            transcriptsRow
             footer
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 18)
-        .frame(width: 320)
+        .padding(18)
+        .frame(width: 360)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        let denoising = (controller.micActive && controller.micEnabled)
-            || (controller.speakerActive && controller.speakerEnabled)
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(spacing: 9) {
             Text("ODE")
-                .font(.system(size: 22, weight: .black))
-                .tracking(6)
+                .font(.system(size: 21, weight: .black))
                 .foregroundStyle(.white)
-            Text("·")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(.white.opacity(0.25))
-            Text(controller.statusText.lowercased())
-                .font(.system(size: 11, weight: .medium))
-                .tracking(0.4)
-                .foregroundStyle(denoising
-                                 ? Color.accentColor.opacity(0.95)
-                                 : Color.white.opacity(0.4))
+            Circle()
+                .fill(controller.anyActive ? Color.green : Color.white.opacity(0.25))
+                .frame(width: 7, height: 7)
+            Text(controller.anyActive ? "Active" : (controller.masterOn ? "Ready" : "Off"))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.6))
             Spacer()
+            Toggle("", isOn: Binding(get: { controller.masterOn },
+                                     set: { _ in controller.toggleMaster() }))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(.accentColor)
         }
-        .padding(.bottom, 2)
     }
 
-    // MARK: - Voice tiles  (replaces stacked toggles)
+    // MARK: - Voice cards
 
-    private var voiceTiles: some View {
-        HStack(spacing: 0) {
-            voiceTile(
-                label: "YOU",
-                enabled: controller.micEnabled,
-                active: controller.micActive,
-                installed: controller.virtualMicInstalled
-            ) { controller.toggleMic() }
+    private func voiceCard(title: String, subtitle: String, icon: String,
+                           enabled: Bool, active: Bool, installed: Bool, level: Float,
+                           toggle: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                Spacer()
+                Toggle("", isOn: Binding(get: { enabled }, set: { _ in toggle() }))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .tint(.accentColor)
+                    .scaleEffect(0.85)
+            }
 
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(width: 1)
+            Text(title)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.top, 10)
+            Text(installed ? subtitle : "Not installed")
+                .font(.system(size: 11))
+                .foregroundStyle(installed ? Color.white.opacity(0.45) : Color.orange.opacity(0.85))
 
-            voiceTile(
-                label: "OTHERS",
-                enabled: controller.speakerEnabled,
-                active: controller.speakerActive,
-                installed: controller.virtualSpeakerInstalled
-            ) { controller.toggleSpeaker() }
+            Spacer(minLength: 14)
+
+            HStack(alignment: .bottom) {
+                AudioMeter(level: level, active: active && enabled, color: .accentColor)
+                Spacer()
+                Text(enabled ? "On" : "Off")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(enabled ? Color.accentColor : Color.white.opacity(0.35))
+            }
         }
-        .frame(height: 96)
+        .padding(14)
+        .frame(height: 150)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.05))
+                .fill(enabled ? Color.accentColor.opacity(0.10) : Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(enabled ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.10),
+                                lineWidth: 1))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
-        )
     }
 
-    /// One half of the noise-cancellation tile.
-    private func voiceTile(label: String,
-                           enabled: Bool,
-                           active: Bool,
-                           installed: Bool,
-                           action: @escaping () -> Void) -> some View {
-        let state: TileState = !installed
-            ? .unavailable
-            : (active && enabled ? .denoising
-               : (active ? .passthrough
-                  : (enabled ? .armed : .off)))
+    // MARK: - Compact device pickers
 
-        return Button(action: action) {
-            VStack(spacing: 9) {
-                Text(label)
-                    .font(.system(size: 10, weight: .heavy))
-                    .tracking(1.6)
-                    .foregroundStyle(.white.opacity(0.55))
+    // MARK: - Transcripts row
 
-                ZStack {
-                    Circle()
-                        .stroke(state.ringColor, lineWidth: 1.2)
-                        .frame(width: 22, height: 22)
-                    Circle()
-                        .fill(state.fillColor)
-                        .frame(width: state.dotSize, height: state.dotSize)
-                }
-
-                Text(state.caption)
-                    .font(.system(size: 10, weight: .medium))
-                    .tracking(0.3)
-                    .foregroundStyle(state.captionColor)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private enum TileState {
-        case denoising, passthrough, armed, off, unavailable
-
-        var caption: String {
-            switch self {
-            case .denoising: return "denoising"
-            case .passthrough: return "passthrough"
-            case .armed: return "armed"
-            case .off: return "off"
-            case .unavailable: return "not installed"
-            }
-        }
-        var ringColor: Color {
-            switch self {
-            case .denoising: return Color.accentColor.opacity(0.85)
-            case .passthrough: return Color.white.opacity(0.45)
-            case .armed: return Color.accentColor.opacity(0.55)
-            case .off: return Color.white.opacity(0.18)
-            case .unavailable: return Color.orange.opacity(0.55)
-            }
-        }
-        var fillColor: Color {
-            switch self {
-            case .denoising: return Color.accentColor
-            case .passthrough: return Color.white.opacity(0.55)
-            case .armed: return Color.accentColor.opacity(0.35)
-            case .off: return Color.clear
-            case .unavailable: return Color.orange.opacity(0.7)
-            }
-        }
-        var dotSize: CGFloat {
-            switch self {
-            case .denoising, .passthrough, .unavailable: return 10
-            case .armed: return 6
-            case .off: return 0
-            }
-        }
-        var captionColor: Color {
-            switch self {
-            case .denoising: return Color.accentColor
-            case .passthrough: return Color.white.opacity(0.6)
-            case .armed: return Color.white.opacity(0.55)
-            case .off: return Color.white.opacity(0.35)
-            case .unavailable: return Color.orange.opacity(0.85)
-            }
-        }
-    }
-
-    // MARK: - Devices  (one compact row each)
-
-    private var devicesBlock: some View {
-        VStack(spacing: 8) {
-            deviceRow(
-                tag: "MIC IN",
-                icon: "mic.fill",
-                inUse: controller.micActive,
-                installed: controller.virtualMicInstalled,
-                current: controller.selectedInput?.name,
-                placeholder: "Select a microphone",
-                devices: controller.inputDevices,
-                selectedID: controller.selectedInputID,
-                onSelect: { controller.selectInput($0) }
-            )
-            deviceRow(
-                tag: "OUT",
-                icon: "speaker.wave.2.fill",
-                inUse: controller.speakerActive,
-                installed: controller.virtualSpeakerInstalled,
-                current: controller.selectedOutput?.name,
-                placeholder: "Select an output",
-                devices: controller.outputDevices,
-                selectedID: controller.selectedOutputID,
-                onSelect: { controller.selectOutput($0) }
-            )
-        }
-    }
-
-    private func deviceRow(tag: String,
-                           icon: String,
-                           inUse: Bool,
-                           installed: Bool,
-                           current: String?,
-                           placeholder: String,
-                           devices: [AudioDevices.Device],
-                           selectedID: AudioDeviceID?,
-                           onSelect: @escaping (AudioDeviceID) -> Void) -> some View {
-        Menu {
-            ForEach(devices, id: \.id) { dev in
-                Button {
-                    onSelect(dev.id)
-                } label: {
-                    if dev.id == selectedID {
-                        Label(dev.name, systemImage: "checkmark")
-                    } else {
-                        Text(dev.name)
+    private var transcriptsRow: some View {
+        HStack(spacing: 11) {
+            Button(action: onNotes) {
+                HStack(spacing: 11) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.08))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white.opacity(0.8))
                     }
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text("Transcripts")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                            if controller.transcribing {
+                                Circle().fill(Color.red).frame(width: 6, height: 6)
+                            }
+                        }
+                        Text(controller.transcribing ? "Transcribing…" : "Save meeting transcripts")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    Spacer(minLength: 0)
                 }
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack(spacing: 10) {
-                // status dot — collapses to nothing when not installed
-                Circle()
-                    .fill(installed
-                          ? (inUse ? Color.green : Color.white.opacity(0.22))
-                          : Color.orange.opacity(0.7))
-                    .frame(width: 6, height: 6)
+            .buttonStyle(.plain)
 
-                Text(tag)
-                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
-                    .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.45))
-                    .frame(width: 42, alignment: .leading)
-
-                Text(current ?? placeholder)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(current == nil ? Color.white.opacity(0.4) : Color.white)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.4))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.white.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
+            Toggle("", isOn: Binding(get: { controller.transcribeEnabled },
+                                     set: { _ in controller.toggleTranscribe() }))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(.accentColor)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-    }
-
-    // MARK: - Meetings (its own slim row)
-
-    private var meetingsRow: some View {
-        Button(action: { controller.toggleTranscribe() }) {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .stroke(
-                            controller.transcribing
-                                ? Color.red.opacity(0.85)
-                                : (controller.transcribeEnabled
-                                   ? Color.accentColor.opacity(0.65)
-                                   : Color.white.opacity(0.2)),
-                            lineWidth: 1.2)
-                        .frame(width: 14, height: 14)
-                    Circle()
-                        .fill(controller.transcribing
-                              ? Color.red
-                              : (controller.transcribeEnabled
-                                 ? Color.accentColor
-                                 : Color.clear))
-                        .frame(width: 6, height: 6)
-                }
-
-                Text("MEETINGS")
-                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
-                    .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.45))
-
-                Text(meetingCaption)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(meetingCaptionColor)
-
-                Spacer()
-
-                Text(controller.transcribeEnabled ? "on" : "off")
-                    .font(.system(size: 10, weight: .heavy))
-                    .tracking(0.8)
-                    .foregroundStyle(controller.transcribeEnabled
-                                     ? Color.accentColor
-                                     : Color.white.opacity(0.35))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.white.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var meetingCaption: String {
-        if controller.transcribing { return "transcribing…" }
-        if controller.transcribeEnabled { return "armed · waiting for a call" }
-        return "transcripts off"
-    }
-    private var meetingCaptionColor: Color {
-        if controller.transcribing { return Color.red.opacity(0.9) }
-        if controller.transcribeEnabled { return Color.white.opacity(0.7) }
-        return Color.white.opacity(0.4)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.05))
+                .overlay(RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)))
     }
 
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Button(action: onTest) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Test the ODE magic")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.accentColor.opacity(0.9))
-                    )
-                    .foregroundStyle(.white)
+        HStack(spacing: 10) {
+            Button(action: onTest) {
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkles")
+                    Text("Test noise removal")
+                        .font(.system(size: 13, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-
-                Button(action: onQuit) {
-                    Image(systemName: "power")
-                        .font(.system(size: 12, weight: .bold))
-                        .padding(.vertical, 10)
-                        .padding(.horizontal, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                        .foregroundStyle(.white.opacity(0.75))
-                }
-                .buttonStyle(.plain)
-                .help("Quit ODE")
-            }
-
-            Button(action: onNotes) {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 11))
-                    Text("Meeting Notes")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundStyle(.white.opacity(0.8))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white.opacity(0.04))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 11).fill(Color.accentColor.opacity(0.9)))
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onQuit) {
+                Image(systemName: "power")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 46, height: 44)
+                    .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.07)))
+                    .foregroundStyle(.white.opacity(0.8))
             }
             .buttonStyle(.plain)
         }
@@ -419,9 +221,79 @@ struct PanelView: View {
                 colors: [Color.black.opacity(0.55), Color.black.opacity(0.72)],
                 startPoint: .top, endPoint: .bottom)
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 22)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.12), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 22))
+    }
+}
+
+/// A fully custom full-width device dropdown (Menu's borderless style refuses to
+/// honor a custom box layout, so we use a Button + popover list instead).
+struct DevicePicker: View {
+    let label: String
+    let current: String?
+    let devices: [AudioDevices.Device]
+    let selectedID: AudioDeviceID?
+    let onSelect: (AudioDeviceID) -> Void
+    @State private var showing = false
+
+    var body: some View {
+        Button { showing.toggle() } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.4))
+                    Text(current ?? "Default")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(devices, id: \.id) { dev in
+                    Button {
+                        onSelect(dev.id); showing = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: dev.id == selectedID ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 11))
+                                .foregroundStyle(dev.id == selectedID ? Color.accentColor : Color.secondary.opacity(0.5))
+                            Text(dev.name)
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if devices.isEmpty {
+                    Text("No devices")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                }
+            }
+            .padding(6)
+            .frame(width: 230)
+        }
     }
 }

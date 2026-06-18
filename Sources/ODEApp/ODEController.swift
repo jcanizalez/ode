@@ -32,10 +32,15 @@ final class ODEController: ObservableObject {
     @Published var transcribeEnabled = false
     @Published var transcribing = false
 
+    // Live audio levels (0...1) for the meters.
+    @Published var micLevel: Float = 0
+    @Published var othersLevel: Float = 0
+
     private let micEngine = LiveEngine()
     private let speakerEngine = LiveEngine()
     private var micObserver: AudioDevices.UsageObserver?
     private var speakerObserver: AudioDevices.UsageObserver?
+    private var levelTimer: Timer?
 
     private var meetingTranscriber: Any?  // MeetingTranscriber (macOS 26+)
 
@@ -44,9 +49,33 @@ final class ODEController: ObservableObject {
         selectedInputID = preferredInputDevice()?.id
         selectedOutputID = preferredOutputDevice()?.id
         installObservers()
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.micLevel = self.micActive ? self.micEngine.currentLevel : 0
+            self.othersLevel = self.speakerActive ? self.speakerEngine.currentLevel : 0
+        }
+    }
+
+    // MARK: - Master toggle
+
+    /// True when either path is enabled (the header switch).
+    var masterOn: Bool { micEnabled || speakerEnabled }
+
+    /// Active = at least one path is currently processing a call.
+    var anyActive: Bool { micActive || speakerActive }
+
+    func toggleMaster() {
+        let turnOn = !masterOn
+        micEnabled = turnOn
+        speakerEnabled = turnOn
+        micEngine.bypassDenoise = !micEnabled
+        speakerEngine.bypassDenoise = !speakerEnabled
+        reconcileMic()
+        reconcileSpeaker()
     }
 
     deinit {
+        levelTimer?.invalidate()
         if let o = micObserver { AudioDevices.removeUsageObserver(o) }
         if let o = speakerObserver { AudioDevices.removeUsageObserver(o) }
     }
