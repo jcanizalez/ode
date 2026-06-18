@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The "Test how you'll sound" view — a Krisp-style three-step flow.
+/// The "Test how you'll sound" view — a three-step record/review flow.
 struct ABTestView: View {
     @ObservedObject var model: ABTestModel
 

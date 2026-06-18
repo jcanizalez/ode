@@ -6,7 +6,7 @@ import ODEKit
 ///
 /// The toggle is only a *setting* (`isEnabled`). The engine actually captures
 /// the real microphone and denoises **only when an app opens the ODE virtual
-/// microphone** — so there is no recording indicator when idle, just like Krisp.
+/// microphone** — so there is no recording indicator when idle.
 final class ODEController: ObservableObject {
     /// User setting: is noise cancellation armed?
     @Published var isEnabled = false

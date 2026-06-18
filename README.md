@@ -1,12 +1,21 @@
-# ODE — Open Denoise Engine
+# ODE — an ode to your voice
 
-An open-source, real-time AI noise-suppression tool for macOS — a free
-alternative to Krisp. ODE captures your microphone, strips background noise
-with a neural network, and (ultimately) exposes a virtual **"ODE Microphone"**
-that any app (Zoom, Teams, Discord, browsers) can select.
+**ODE** is named after the *ode* — a lyric poem written in celebration of
+something. This one is a celebration of **your voice**: an open-source,
+real-time AI noise-suppression tool for macOS that strips away background noise
+so people hear *you*, clearly. A free, open alternative to proprietary
+AI noise-suppression tools.
+
+*(ODE also happens to stand for **Open Denoise Engine** — open source, neural
+denoising, real-time engine.)*
+
+ODE captures your microphone, removes background noise with a neural network,
+and exposes a virtual **"ODE Microphone"** that any app (Zoom, Teams, Discord,
+browsers) can select.
 
 > Status: **Phases 0–3 complete + DPDFNet engine.** Working CLI, real-time
-> engine, menu-bar app with Before/After tester. Installer is next.
+> engine, and a glass menu-bar app with a "Test the ODE magic"
+> before/after tester. Installer is next.
 
 ## How it works
 
@@ -59,7 +68,7 @@ Record from your mic and write raw + denoised WAVs to compare
 - [x] **Phase 0** — Repo scaffold, Swift package
 - [x] **Phase 1** — CLI: mic/file capture → denoise → WAV
 - [x] **Phase 2** — Real-time streaming engine (`ode live`) + device routing + virtual-mic setup
-- [x] **Phase 3** — AppKit menu-bar app + Before/After A/B tester
+- [x] **Phase 3** — Glass menu-bar app + "Test the ODE magic" A/B tester
 - [x] **Engine upgrade** — replaced RNNoise with DPDFNet (sherpa-onnx) after an on-device bake-off
 - [ ] **Phase 4** — Signed/notarized `.pkg` installer
 - [ ] **Phase 5** — Acoustic echo cancellation (WebRTC APM)
@@ -71,9 +80,10 @@ Record from your mic and write raw + denoised WAVs to compare
 open dist/ODE.app          # waveform icon appears in the menu bar
 ```
 
-From the menu: toggle **Denoise On/Off**, pick the **Output Device** (route into
-your virtual mic), or open **Test (Before / After)…** to record a short clip and
-hear it played back *with* and *without* ODE — a quick Krisp-style comparison.
+From the glass panel: flip **Cancel my noise**, pick the **ODE Microphone**
+output device, or tap **✨ Test the ODE magic** to record a clip and hear it
+played back *with* and *without* ODE — flip the Off/On switch to compare
+instantly while it loops.
 
 ## Real-time usage
 

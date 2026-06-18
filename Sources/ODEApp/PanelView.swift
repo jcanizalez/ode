@@ -2,7 +2,7 @@ import SwiftUI
 import CoreAudio
 import ODEKit
 
-/// Krisp-style glass control panel for ODE.
+/// Glass control panel for ODE.
 struct PanelView: View {
     @ObservedObject var controller: ODEController
     var onTest: () -> Void
@@ -127,8 +127,8 @@ struct PanelView: View {
         HStack(spacing: 10) {
             Button(action: onTest) {
                 HStack(spacing: 6) {
-                    Image(systemName: "waveform.badge.magnifyingglass")
-                    Text("Test · Before / After")
+                    Image(systemName: "sparkles")
+                    Text("Test the ODE magic")
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)

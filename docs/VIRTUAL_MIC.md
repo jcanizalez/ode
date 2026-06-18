@@ -11,8 +11,8 @@ written to the output is readable on the input.
  Zoom/Teams ◄─ (selects as mic) ◄─ Loopback INPUT   ("ODE Microphone")
 ```
 
-This is exactly how Krisp works: on this machine you can see Krisp's own pair
-with `ode devices` — `krisp speaker` (output) and `krisp microphone` (input).
+This loopback approach is how virtual-microphone audio tools work: a paired
+output/input device that other apps can select as their microphone.
 
 ## Quick path — BlackHole via Homebrew (recommended)
 

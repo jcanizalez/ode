@@ -42,7 +42,7 @@ final class RingBuffer {
 
 /// Real-time loop: capture default mic -> denoise -> play to a target output
 /// device (e.g. the virtual "ODE Microphone"). This is the streaming core that
-/// makes ODE behave like Krisp.
+/// the virtual "ODE Microphone" device.
 public final class LiveEngine {
     private let captureEngine = AVAudioEngine()
     private let playbackEngine = AVAudioEngine()

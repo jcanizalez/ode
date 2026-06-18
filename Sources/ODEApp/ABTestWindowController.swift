@@ -10,7 +10,7 @@ final class ABTestWindowController: NSWindowController {
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 460),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.title = "Test how you'll sound"
+        window.title = "The ODE magic"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
