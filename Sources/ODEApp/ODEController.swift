@@ -4,133 +4,208 @@ import ODEKit
 
 /// Observable state bridging the SwiftUI panel to the ODE engine.
 ///
-/// The toggle is only a *setting* (`isEnabled`). The engine actually captures
-/// the real microphone and denoises **only when an app opens the ODE virtual
-/// microphone** — so there is no recording indicator when idle.
+/// ODE has two independent denoising paths, each gated on real device usage so
+/// nothing is captured/played until an app actually uses the virtual device:
 ///
-/// Conceptually: ODE always *outputs* to the "ODE Microphone" virtual device;
-/// the user only chooses which real **input** microphone to capture from.
+///  • "Cancel my noise"     — capture your real mic, denoise, output to the
+///                            "ODE Microphone" device that call apps read.
+///  • "Cancel others' noise"— capture incoming audio an app plays into the
+///                            "ODE Speaker" device, denoise, play to your real
+///                            speakers/headphones.
+///
+/// Each toggle is only a *setting*; audio passes through (raw) when its toggle
+/// is off, and is denoised when on — turning a toggle off never silences audio.
 final class ODEController: ObservableObject {
-    /// User setting: is noise cancellation armed?
-    @Published var isEnabled = false
-    /// Is the engine actively processing right now (an app is using the mic)?
-    @Published var isActive = false
-    /// Real input microphones the user can capture from.
+    // Mic path ("cancel my noise")
+    @Published var micEnabled = false
+    @Published var micActive = false
     @Published var inputDevices: [AudioDevices.Device] = []
-    /// The chosen real input mic.
     @Published var selectedInputID: AudioDeviceID?
 
-    private let engine = LiveEngine()
-    private var usageObserver: AudioDevices.UsageObserver?
+    // Speaker path ("cancel others' noise")
+    @Published var speakerEnabled = false
+    @Published var speakerActive = false
+    @Published var outputDevices: [AudioDevices.Device] = []
+    @Published var selectedOutputID: AudioDeviceID?
+
+    private let micEngine = LiveEngine()
+    private let speakerEngine = LiveEngine()
+    private var micObserver: AudioDevices.UsageObserver?
+    private var speakerObserver: AudioDevices.UsageObserver?
 
     init() {
         refreshDevices()
         selectedInputID = preferredInputDevice()?.id
-        installUsageObserver()
+        selectedOutputID = preferredOutputDevice()?.id
+        installObservers()
     }
 
     deinit {
-        if let o = usageObserver { AudioDevices.removeUsageObserver(o) }
+        if let o = micObserver { AudioDevices.removeUsageObserver(o) }
+        if let o = speakerObserver { AudioDevices.removeUsageObserver(o) }
     }
 
-    /// The fixed virtual output device ("ODE Microphone"). ODE always writes
-    /// denoised audio here; apps select it as their microphone.
+    // MARK: - Virtual devices
+
+    /// "ODE Microphone": ODE writes denoised voice here; apps read it as a mic.
     var virtualMic: AudioDevices.Device? {
-        let outs = AudioDevices.all().filter { $0.hasOutput }
-        return outs.first { $0.name.localizedCaseInsensitiveContains("ode microphone") }
-            ?? outs.first { $0.name.localizedCaseInsensitiveContains("blackhole") }
+        AudioDevices.all().first {
+            $0.hasOutput && $0.name.localizedCaseInsensitiveContains("ode microphone")
+        } ?? AudioDevices.all().first {
+            $0.hasOutput && $0.name.localizedCaseInsensitiveContains("blackhole")
+        }
+    }
+
+    /// "ODE Speaker": apps play incoming audio here; ODE reads + denoises it.
+    var virtualSpeaker: AudioDevices.Device? {
+        AudioDevices.all().first {
+            $0.hasInput && $0.name.localizedCaseInsensitiveContains("ode speaker")
+        }
     }
 
     var virtualMicInstalled: Bool { virtualMic != nil }
+    var virtualSpeakerInstalled: Bool { virtualSpeaker != nil }
 
-    var selectedInput: AudioDevices.Device? {
-        inputDevices.first { $0.id == selectedInputID }
-    }
+    var selectedInput: AudioDevices.Device? { inputDevices.first { $0.id == selectedInputID } }
+    var selectedOutput: AudioDevices.Device? { outputDevices.first { $0.id == selectedOutputID } }
 
+    /// Combined status across both denoising paths for the header.
     var statusText: String {
-        if !virtualMicInstalled { return "Install the ODE Microphone to begin" }
-        if isActive {
-            return isEnabled ? "Removing noise" : "Passing through (noise on)"
+        if !virtualMicInstalled && !virtualSpeakerInstalled {
+            return "Install ODE devices to begin"
         }
-        return isEnabled ? "On · waiting for a call" : "Off · waiting for a call"
+        let anyEnabled = micEnabled || speakerEnabled
+        let denoisingNow = (micActive && micEnabled) || (speakerActive && speakerEnabled)
+        let passthroughNow = (micActive && !micEnabled) || (speakerActive && !speakerEnabled)
+
+        if denoisingNow { return "Removing noise" }
+        if passthroughNow { return "Passing through" }
+        if anyEnabled { return "On · waiting for a call" }
+        return "Off"
     }
+
+    // MARK: - Device lists
 
     func refreshDevices() {
-        // Only real microphones — never the virtual ODE Microphone / loopbacks.
         inputDevices = AudioDevices.all().filter { $0.hasInput && !isLoopback($0) }
+        outputDevices = AudioDevices.all().filter { $0.hasOutput && !isLoopback($0) }
         if selectedInputID == nil || !inputDevices.contains(where: { $0.id == selectedInputID }) {
             selectedInputID = preferredInputDevice()?.id
         }
+        if selectedOutputID == nil || !outputDevices.contains(where: { $0.id == selectedOutputID }) {
+            selectedOutputID = preferredOutputDevice()?.id
+        }
     }
 
-    /// Flip the noise-cancellation setting. Audio keeps flowing either way;
-    /// this only switches between denoised and raw passthrough.
-    func toggle() {
-        isEnabled.toggle()
-        engine.bypassDenoise = !isEnabled
-        reconcile()
+    // MARK: - Toggles
+
+    func toggleMic() {
+        micEnabled.toggle()
+        micEngine.bypassDenoise = !micEnabled
+        reconcileMic()
+    }
+
+    func toggleSpeaker() {
+        speakerEnabled.toggle()
+        speakerEngine.bypassDenoise = !speakerEnabled
+        reconcileSpeaker()
     }
 
     func selectInput(_ id: AudioDeviceID) {
         selectedInputID = id
-        if isActive {            // re-capture from the newly chosen mic
-            engine.stop()
-            isActive = false
-        }
-        reconcile()
+        if micActive { micEngine.stop(); micActive = false }
+        reconcileMic()
+    }
+
+    func selectOutput(_ id: AudioDeviceID) {
+        selectedOutputID = id
+        if speakerActive { speakerEngine.stop(); speakerActive = false }
+        reconcileSpeaker()
     }
 
     func stopIfRunning() {
-        if isActive { engine.stop(); isActive = false }
+        if micActive { micEngine.stop(); micActive = false }
+        if speakerActive { speakerEngine.stop(); speakerActive = false }
     }
 
     // MARK: - Usage gating
 
-    private func installUsageObserver() {
-        if let o = usageObserver { AudioDevices.removeUsageObserver(o); usageObserver = nil }
-        guard let dev = virtualMic else { return }
-        usageObserver = AudioDevices.addUsageObserver(dev.id) { [weak self] _ in
-            DispatchQueue.main.async { self?.reconcile() }
+    private func installObservers() {
+        if let o = micObserver { AudioDevices.removeUsageObserver(o); micObserver = nil }
+        if let o = speakerObserver { AudioDevices.removeUsageObserver(o); speakerObserver = nil }
+
+        if let mic = virtualMic {
+            micObserver = AudioDevices.addUsageObserver(
+                mic.id, readScope: kAudioObjectPropertyScopeInput) { [weak self] _ in
+                DispatchQueue.main.async { self?.reconcileMic() }
+            }
+        }
+        if let spk = virtualSpeaker {
+            speakerObserver = AudioDevices.addUsageObserver(
+                spk.id, readScope: kAudioObjectPropertyScopeOutput) { [weak self] _ in
+                DispatchQueue.main.async { self?.reconcileSpeaker() }
+            }
         }
     }
 
-    /// Start or stop the engine so that audio flows whenever an app is using the
-    /// ODE Microphone. The "Cancel my noise" toggle only switches between
-    /// denoised and raw passthrough — it never silences the mic.
-    private func reconcile() {
+    /// Mic path runs whenever an app reads the ODE Microphone.
+    private func reconcileMic() {
         guard let out = virtualMic else { return }
         let inUse = AudioDevices.isInputInUse(out.id)
-
-        if inUse && !isActive {
-            guard let input = selectedInput, input.id != out.id else {
-                NSLog("ODE: no valid input microphone selected.")
-                return
-            }
+        if inUse && !micActive {
+            guard let input = selectedInput, input.id != out.id else { return }
             do {
-                try engine.start(inputDevice: input, outputDevice: out, bypass: !isEnabled)
-                isActive = true
+                try micEngine.start(inputDevice: input, outputDevice: out, bypass: !micEnabled)
+                micActive = true
             } catch {
-                isActive = false
-                NSLog("ODE: failed to start engine: \(error.localizedDescription)")
+                micActive = false
+                NSLog("ODE: mic engine failed: \(error.localizedDescription)")
             }
-        } else if !inUse && isActive {
-            engine.stop()
-            isActive = false
-        } else if isActive {
-            // Already running — just keep bypass in sync with the toggle.
-            engine.bypassDenoise = !isEnabled
+        } else if !inUse && micActive {
+            micEngine.stop(); micActive = false
+        } else if micActive {
+            micEngine.bypassDenoise = !micEnabled
         }
     }
 
-    private func preferredInputDevice() -> AudioDevices.Device? {
-        if let def = AudioDevices.defaultInput(), !isLoopback(def), def.hasInput {
-            return def
+    /// Speaker path runs whenever an app plays into the ODE Speaker.
+    private func reconcileSpeaker() {
+        guard let spk = virtualSpeaker else { return }
+        let inUse = AudioDevices.isOutputInUse(spk.id)
+        if inUse && !speakerActive {
+            guard let realOut = selectedOutput, realOut.id != spk.id else { return }
+            do {
+                // Capture from the ODE Speaker (what the app played in), denoise,
+                // and play to your real speakers/headphones.
+                try speakerEngine.start(inputDevice: spk, outputDevice: realOut,
+                                        bypass: !speakerEnabled)
+                speakerActive = true
+            } catch {
+                speakerActive = false
+                NSLog("ODE: speaker engine failed: \(error.localizedDescription)")
+            }
+        } else if !inUse && speakerActive {
+            speakerEngine.stop(); speakerActive = false
+        } else if speakerActive {
+            speakerEngine.bypassDenoise = !speakerEnabled
         }
+    }
+
+    // MARK: - Preferences
+
+    private func preferredInputDevice() -> AudioDevices.Device? {
+        if let def = AudioDevices.defaultInput(), !isLoopback(def), def.hasInput { return def }
         return inputDevices.first
+    }
+
+    private func preferredOutputDevice() -> AudioDevices.Device? {
+        if let def = AudioDevices.defaultOutput(), !isLoopback(def), def.hasOutput { return def }
+        return outputDevices.first
     }
 
     private func isLoopback(_ d: AudioDevices.Device) -> Bool {
         let n = d.name.lowercased()
-        return n.contains("ode microphone") || n.contains("blackhole")
+        return n.contains("ode microphone") || n.contains("ode speaker")
+            || n.contains("blackhole")
     }
 }

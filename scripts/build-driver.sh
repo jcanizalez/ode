@@ -34,10 +34,10 @@ git clone --depth 1 https://github.com/ExistentialAudio/BlackHole.git "$SRC_DIR"
 SRCFILE="$SRC_DIR/BlackHole/BlackHole.c"
 /usr/bin/sed -i '' \
     -e 's/kDevice_Name                        kDriver_Name " %ich"/kDevice_Name                        "ODE Microphone"/' \
-    -e 's/kDevice2_Name                       kDriver_Name " %ich 2"/kDevice2_Name                       "ODE Microphone"/' \
+    -e 's/kDevice2_Name                       kDriver_Name " %ich 2"/kDevice2_Name                       "ODE Speaker"/' \
     "$SRCFILE"
 
-echo "Compiling ODE Microphone driver (this may take a minute)…"
+echo "Compiling ODE virtual-audio driver (this may take a minute)…"
 mkdir -p "$BUILD_DIR"
 xcodebuild \
     -project "$SRC_DIR/BlackHole.xcodeproj" \
@@ -50,6 +50,7 @@ xcodebuild \
     GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS
     kDriver_Name=\"ODE\"
     kPlugIn_BundleID=\"'$BUNDLE_ID'\"
+    kDevice2_IsHidden=false
     kNumber_Of_Channels=2' \
     >/dev/null
 

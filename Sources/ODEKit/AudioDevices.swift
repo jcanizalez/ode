@@ -53,9 +53,20 @@ public enum AudioDevices {
     /// denoised audio) do not count as usage — only an app *reading* the
     /// virtual microphone does. This is how we detect that e.g. Zoom opened it.
     public static func isInputInUse(_ id: AudioDeviceID) -> Bool {
+        isInUse(id, scope: kAudioObjectPropertyScopeInput)
+    }
+
+    /// Whether the device's **output** is currently in use by any process — i.e.
+    /// an app is *playing audio into* it. Used to detect that a call app is
+    /// sending its incoming audio to the "ODE Speaker" device.
+    public static func isOutputInUse(_ id: AudioDeviceID) -> Bool {
+        isInUse(id, scope: kAudioObjectPropertyScopeOutput)
+    }
+
+    private static func isInUse(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Bool {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-            mScope: kAudioObjectPropertyScopeInput,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain)
         var value: UInt32 = 0
         var size = UInt32(MemoryLayout<UInt32>.size)
@@ -82,17 +93,18 @@ public enum AudioDevices {
     }
 
     public static func addUsageObserver(_ id: AudioDeviceID,
+                                        readScope: AudioObjectPropertyScope = kAudioObjectPropertyScopeInput,
                                         onChange: @escaping (Bool) -> Void) -> UsageObserver? {
         // Register on the GLOBAL scope: CoreAudio posts IsRunningSomewhere change
-        // notifications there. We still *read* the input scope in the handler so
-        // our own writes to the device's output (when routing denoised audio) do
-        // not register as microphone usage.
+        // notifications there. We *read* a chosen scope in the handler — input
+        // for the virtual mic (an app reading us), output for the virtual
+        // speaker (an app writing to us) — so our own activity is not counted.
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         let block: AudioObjectPropertyListenerBlock = { _, _ in
-            onChange(isInputInUse(id))
+            onChange(isInUse(id, scope: readScope))
         }
         let status = AudioObjectAddPropertyListenerBlock(
             id, &addr, DispatchQueue.global(qos: .userInitiated), block)

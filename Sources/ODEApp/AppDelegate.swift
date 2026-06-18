@@ -50,7 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateIcon() {
         guard let button = statusItem.button else { return }
-        let denoising = controller.isActive && controller.isEnabled
+        let denoising = (controller.micActive && controller.micEnabled)
+            || (controller.speakerActive && controller.speakerEnabled)
         let symbol = denoising ? "waveform.circle.fill" : "waveform.circle"
         if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "ODE") {
             img.isTemplate = true
