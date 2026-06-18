@@ -1,10 +1,10 @@
 import AVFoundation
 
-enum AudioIO {
-    static let sampleRate: Double = 48_000
+public enum AudioIO {
+    public static let sampleRate: Double = 48_000
 
     /// 48 kHz mono float format used throughout the engine.
-    static var monoFormat: AVAudioFormat {
+    public static var monoFormat: AVAudioFormat {
         AVAudioFormat(commonFormat: .pcmFormatFloat32,
                       sampleRate: sampleRate,
                       channels: 1,
@@ -14,7 +14,7 @@ enum AudioIO {
     // MARK: - WAV reading
 
     /// Reads any audio file and returns mono Float samples resampled to 48 kHz.
-    static func readSamples(url: URL) throws -> [Float] {
+    public static func readSamples(url: URL) throws -> [Float] {
         let file = try AVAudioFile(forReading: url)
         let srcFormat = file.processingFormat
         let frameCount = AVAudioFrameCount(file.length)
@@ -27,7 +27,7 @@ enum AudioIO {
     }
 
     /// Convert an arbitrary PCM buffer to a flat array of 48 kHz mono floats.
-    static func resampleToMono48k(_ buffer: AVAudioPCMBuffer) -> [Float] {
+    public static func resampleToMono48k(_ buffer: AVAudioPCMBuffer) -> [Float] {
         let dstFormat = monoFormat
         if buffer.format == dstFormat {
             return bufferToArray(buffer)
@@ -54,7 +54,7 @@ enum AudioIO {
         return bufferToArray(dst)
     }
 
-    static func bufferToArray(_ buffer: AVAudioPCMBuffer) -> [Float] {
+    public static func bufferToArray(_ buffer: AVAudioPCMBuffer) -> [Float] {
         guard let ch = buffer.floatChannelData else { return [] }
         let n = Int(buffer.frameLength)
         return Array(UnsafeBufferPointer(start: ch[0], count: n))
@@ -63,7 +63,7 @@ enum AudioIO {
     // MARK: - WAV writing
 
     /// Writes mono 48 kHz float samples to a 16-bit PCM WAV file.
-    static func writeWav(samples: [Float], url: URL) throws {
+    public static func writeWav(samples: [Float], url: URL) throws {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: sampleRate,

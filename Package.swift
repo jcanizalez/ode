@@ -15,10 +15,20 @@ let package = Package(
                 .unsafeFlags(["-O3", "-DNDEBUG", "-Wno-everything"])
             ]
         ),
+        .target(
+            name: "ODEKit",
+            dependencies: ["CRNNoise"],
+            path: "Sources/ODEKit"
+        ),
         .executableTarget(
             name: "ode",
-            dependencies: ["CRNNoise"],
+            dependencies: ["ODEKit"],
             path: "Sources/ode"
+        ),
+        .executableTarget(
+            name: "ODEApp",
+            dependencies: ["ODEKit"],
+            path: "Sources/ODEApp"
         )
     ]
 )

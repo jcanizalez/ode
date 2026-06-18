@@ -54,10 +54,21 @@ Record from your mic and write raw + denoised WAVs to compare
 - [x] **Phase 0** — Repo scaffold, vendored RNNoise C core, Swift package
 - [x] **Phase 1** — CLI: mic/file capture → RNNoise denoise → WAV
 - [x] **Phase 2** — Real-time streaming engine (`ode live`) + device routing + virtual-mic setup
-- [ ] **Phase 3** — SwiftUI menu-bar app (toggle, input picker)
+- [x] **Phase 3** — SwiftUI/AppKit menu-bar app + Before/After A/B tester
 - [ ] **Phase 4** — Signed/notarized `.pkg` installer
 - [ ] **Phase 5** — DeepFilterNet model option for higher quality
 - [ ] **Phase 6** — Acoustic echo cancellation (WebRTC APM)
+
+## Menu-bar app (Phase 3)
+
+```sh
+./scripts/build-app.sh     # produces dist/ODE.app (ad-hoc signed)
+open dist/ODE.app          # waveform icon appears in the menu bar
+```
+
+From the menu: toggle **Denoise On/Off**, pick the **Output Device** (route into
+your virtual mic), or open **Test (Before / After)…** to record a short clip and
+hear it played back *with* and *without* ODE — a quick Krisp-style comparison.
 
 ## Real-time usage (Phase 2)
 
@@ -78,15 +89,12 @@ the branded "ODE Microphone" build.
 Package.swift
 Sources/
   CRNNoise/        Vendored RNNoise C sources + module map (the AI core)
-  ode/             Swift engine + CLI
-    Denoiser.swift     RNNoise wrapper
-    AudioIO.swift      WAV read/write + resampling to 48 kHz mono
-    MicRecorder.swift  AVAudioEngine mic capture
-    AudioDevices.swift CoreAudio device enumeration
-    LiveEngine.swift   Real-time capture -> denoise -> device routing
-    main.swift         CLI entry point
+  ODEKit/          Shared engine library (denoise, audio I/O, devices, live loop)
+  ode/             CLI front-end (file / mic / devices / live)
+  ODEApp/          Menu-bar app (AppDelegate + Before/After tester)
 scripts/
   install-virtual-mic.sh   Installs a loopback device (BlackHole)
+  build-app.sh             Builds & signs dist/ODE.app
 docs/
   VIRTUAL_MIC.md           Virtual-microphone setup & branded build
 ```

@@ -3,11 +3,11 @@ import CRNNoise
 /// Thin Swift wrapper over RNNoise.
 /// RNNoise operates on 48 kHz mono frames of `frameSize` samples,
 /// expressed as floats in int16 scale (roughly -32768...32767).
-final class Denoiser {
+public final class Denoiser {
     private let state: OpaquePointer
-    let frameSize: Int
+    public let frameSize: Int
 
-    init() {
+    public init() {
         self.state = rnnoise_create(nil)
         self.frameSize = Int(rnnoise_get_frame_size())
     }
@@ -19,7 +19,7 @@ final class Denoiser {
     /// Denoise a full buffer of normalized mono samples ([-1, 1], 48 kHz).
     /// Returns a new buffer of the same length. Trailing samples that do not
     /// fill a complete frame are passed through unprocessed.
-    func process(_ samples: [Float]) -> [Float] {
+    public func process(_ samples: [Float]) -> [Float] {
         var out = [Float](repeating: 0, count: samples.count)
         var frameIn = [Float](repeating: 0, count: frameSize)
         var frameOut = [Float](repeating: 0, count: frameSize)
@@ -52,7 +52,7 @@ final class Denoiser {
     /// frames. RNNoise's internal recurrent state is preserved between calls,
     /// which is exactly what continuous real-time audio needs.
     /// Returns only the samples that completed full frames this call.
-    func processStreaming(_ chunk: [Float]) -> [Float] {
+    public func processStreaming(_ chunk: [Float]) -> [Float] {
         inResidual.append(contentsOf: chunk)
         guard inResidual.count >= frameSize else { return [] }
 

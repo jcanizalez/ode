@@ -2,12 +2,14 @@ import AVFoundation
 
 /// Captures audio from the default input device for a fixed duration,
 /// returning 48 kHz mono float samples.
-final class MicRecorder {
+public final class MicRecorder {
     private let engine = AVAudioEngine()
     private var collected: [Float] = []
     private let lock = NSLock()
 
-    func record(seconds: Double) throws -> [Float] {
+    public init() {}
+
+    public func record(seconds: Double) throws -> [Float] {
         let input = engine.inputNode
         let inFormat = input.inputFormat(forBus: 0)
 

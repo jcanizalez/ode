@@ -2,16 +2,16 @@ import AVFoundation
 import CoreAudio
 
 /// CoreAudio device discovery helpers.
-enum AudioDevices {
-    struct Device {
-        let id: AudioDeviceID
-        let uid: String
-        let name: String
-        let hasInput: Bool
-        let hasOutput: Bool
+public enum AudioDevices {
+    public struct Device {
+        public let id: AudioDeviceID
+        public let uid: String
+        public let name: String
+        public let hasInput: Bool
+        public let hasOutput: Bool
     }
 
-    static func all() -> [Device] {
+    public static func all() -> [Device] {
         var size: UInt32 = 0
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -32,16 +32,16 @@ enum AudioDevices {
         }
     }
 
-    static func find(name: String) -> Device? {
+    public static func find(name: String) -> Device? {
         all().first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
             ?? all().first { $0.name.localizedCaseInsensitiveContains(name) }
     }
 
-    static func defaultOutput() -> Device? {
+    public static func defaultOutput() -> Device? {
         deviceFor(selector: kAudioHardwarePropertyDefaultOutputDevice)
     }
 
-    static func defaultInput() -> Device? {
+    public static func defaultInput() -> Device? {
         deviceFor(selector: kAudioHardwarePropertyDefaultInputDevice)
     }
 

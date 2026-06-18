@@ -43,15 +43,17 @@ final class RingBuffer {
 /// Real-time loop: capture default mic -> denoise -> play to a target output
 /// device (e.g. the virtual "ODE Microphone"). This is the streaming core that
 /// makes ODE behave like Krisp.
-final class LiveEngine {
+public final class LiveEngine {
     private let captureEngine = AVAudioEngine()
     private let playbackEngine = AVAudioEngine()
     private let denoiser = Denoiser()
     private let ring = RingBuffer(capacity: 48_000 * 4) // 4 s headroom
     private var sourceNode: AVAudioSourceNode!
 
+    public init() {}
+
     /// Start the loop. If `outputDevice` is nil, the system default output is used.
-    func start(outputDevice: AudioDevices.Device?) throws {
+    public func start(outputDevice: AudioDevices.Device?) throws {
         let fmt = AudioIO.monoFormat
 
         // --- Playback graph: source node pulls denoised audio from the ring ---
@@ -85,7 +87,7 @@ final class LiveEngine {
         try captureEngine.start()
     }
 
-    func stop() {
+    public func stop() {
         captureEngine.inputNode.removeTap(onBus: 0)
         captureEngine.stop()
         playbackEngine.stop()
