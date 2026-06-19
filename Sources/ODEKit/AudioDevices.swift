@@ -9,6 +9,7 @@ public enum AudioDevices {
         public let name: String
         public let hasInput: Bool
         public let hasOutput: Bool
+        public let isHidden: Bool
     }
 
     public static func all() -> [Device] {
@@ -23,18 +24,55 @@ public enum AudioDevices {
         var ids = [AudioDeviceID](repeating: 0, count: count)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
                                          &addr, 0, nil, &size, &ids) == noErr else { return [] }
-        return ids.map { id in
-            Device(id: id,
-                   uid: stringProp(id, kAudioDevicePropertyDeviceUID) ?? "",
-                   name: stringProp(id, kAudioObjectPropertyName) ?? "Unknown",
-                   hasInput: channelCount(id, scope: kAudioObjectPropertyScopeInput) > 0,
-                   hasOutput: channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0)
-        }
+        return ids.map { device(for: $0) }
+    }
+
+    private static func device(for id: AudioDeviceID) -> Device {
+        Device(id: id,
+               uid: stringProp(id, kAudioDevicePropertyDeviceUID) ?? "",
+               name: stringProp(id, kAudioObjectPropertyName) ?? "Unknown",
+               hasInput: channelCount(id, scope: kAudioObjectPropertyScopeInput) > 0,
+               hasOutput: channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0,
+               isHidden: isDeviceHidden(id))
+    }
+
+    private static func isDeviceHidden(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyIsHidden,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr else { return false }
+        return value != 0
     }
 
     public static func find(name: String) -> Device? {
         all().first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
             ?? all().first { $0.name.localizedCaseInsensitiveContains(name) }
+    }
+
+    /// Resolve any device (including hidden ones) by its CoreAudio UID. Used to
+    /// reach the hidden feed/tap devices that back the visible ODE devices.
+    public static func findByUID(_ uid: String) -> Device? {
+        var translated = AudioDeviceID(kAudioObjectUnknown)
+        var cfUID = uid as CFString
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var outSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = withUnsafeMutablePointer(to: &cfUID) { uidPtr in
+            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                       &addr,
+                                       UInt32(MemoryLayout<CFString>.size), uidPtr,
+                                       &outSize, &translated)
+        }
+        guard status == noErr, translated != AudioDeviceID(kAudioObjectUnknown) else {
+            // Fall back to scanning (hidden devices are still enumerated).
+            return all().first { $0.uid == uid }
+        }
+        return device(for: translated)
     }
 
     public static func defaultOutput() -> Device? {

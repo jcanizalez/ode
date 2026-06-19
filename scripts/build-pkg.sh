@@ -18,7 +18,8 @@ VERSION="0.1.0"
 IDENTIFIER="audio.ode.installer"
 DIST="dist"
 APP="$DIST/ODE.app"
-DRIVER="$DIST/ODEMicrophone.driver"
+MIC_DRIVER="$DIST/ODEMicrophone.driver"
+SPK_DRIVER="$DIST/ODESpeaker.driver"
 PKG_OUT="$DIST/ODE-$VERSION.pkg"
 
 # --- Ensure the app exists ---
@@ -27,9 +28,9 @@ if [ ! -d "$APP" ]; then
     ./scripts/build-app.sh
 fi
 
-# --- Ensure the driver exists ---
-if [ ! -d "$DRIVER" ]; then
-    echo "Building the ODE Microphone driver…"
+# --- Ensure both drivers exist ---
+if [ ! -d "$MIC_DRIVER" ] || [ ! -d "$SPK_DRIVER" ]; then
+    echo "Building the ODE virtual-audio drivers…"
     ./scripts/build-driver.sh
 fi
 
@@ -39,7 +40,8 @@ mkdir -p "$ROOT/Applications"
 mkdir -p "$ROOT/Library/Audio/Plug-Ins/HAL"
 # ditto avoids the AppleDouble (._*) files that cp -R leaves behind.
 ditto "$APP" "$ROOT/Applications/ODE.app"
-ditto "$DRIVER" "$ROOT/Library/Audio/Plug-Ins/HAL/ODEMicrophone.driver"
+ditto "$MIC_DRIVER" "$ROOT/Library/Audio/Plug-Ins/HAL/ODEMicrophone.driver"
+ditto "$SPK_DRIVER" "$ROOT/Library/Audio/Plug-Ins/HAL/ODESpeaker.driver"
 
 # --- postinstall: reload CoreAudio and launch the app ---
 SCRIPTS="$(mktemp -d)"

@@ -38,6 +38,12 @@ final class RingBuffer {
             }
         }
     }
+
+    /// Drop all buffered audio (call between sessions to avoid stale playback).
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        readIdx = 0; writeIdx = 0; filled = 0
+    }
 }
 
 /// Real-time loop: capture default mic -> denoise -> play to a target output
@@ -49,6 +55,7 @@ public final class LiveEngine {
     private let denoiser = Denoiser()
     private let ring = RingBuffer(capacity: 48_000 * 4) // 4 s headroom
     private var sourceNode: AVAudioSourceNode!
+    private var isRunning = false
 
     /// When true, audio passes through untouched (no denoising). Can be flipped
     /// live while the engine runs — the audio keeps flowing either way.
@@ -91,6 +98,10 @@ public final class LiveEngine {
     public func start(inputDevice: AudioDevices.Device? = nil,
                       outputDevice: AudioDevices.Device?,
                       bypass: Bool = false) throws {
+        // Ensure any previous session is fully torn down first, so a second
+        // call starts from a clean graph (no duplicate nodes / stale audio).
+        if isRunning { stop() }
+
         bypassDenoise = bypass
         // Refuse to capture and play through the same device (feedback loop).
         if let inDev = inputDevice, let outDev = outputDevice, inDev.id == outDev.id {
@@ -99,10 +110,14 @@ public final class LiveEngine {
                             "Input and output devices must differ (would cause a feedback loop)."])
         }
 
+        // Start every session from a clean slate.
+        ring.reset()
+        denoiser.resetStreaming()
+
         let fmt = AudioIO.monoFormat
 
         // --- Playback graph: source node pulls denoised audio from the ring ---
-        sourceNode = AVAudioSourceNode(format: fmt) { [ring] _, _, frameCount, audioBufferList in
+        let node = AVAudioSourceNode(format: fmt) { [ring] _, _, frameCount, audioBufferList in
             let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
             let n = Int(frameCount)
             if let ptr = abl[0].mData?.assumingMemoryBound(to: Float.self) {
@@ -110,8 +125,9 @@ public final class LiveEngine {
             }
             return noErr
         }
-        playbackEngine.attach(sourceNode)
-        playbackEngine.connect(sourceNode, to: playbackEngine.mainMixerNode, format: fmt)
+        sourceNode = node
+        playbackEngine.attach(node)
+        playbackEngine.connect(node, to: playbackEngine.mainMixerNode, format: fmt)
 
         if let dev = outputDevice {
             try setOutputDevice(playbackEngine, deviceID: dev.id)
@@ -141,13 +157,25 @@ public final class LiveEngine {
         playbackEngine.prepare()
         try playbackEngine.start()
         try captureEngine.start()
+        isRunning = true
     }
 
     public func stop() {
+        guard isRunning else { return }
+        isRunning = false
         captureEngine.inputNode.removeTap(onBus: 0)
         captureEngine.stop()
         _ = denoiser.flushStreaming()
+        denoiser.resetStreaming()
         playbackEngine.stop()
+        // Fully remove the playback source node so the next start builds a fresh
+        // graph instead of stacking a second node on the mixer.
+        if let node = sourceNode {
+            playbackEngine.disconnectNodeOutput(node)
+            playbackEngine.detach(node)
+            sourceNode = nil
+        }
+        ring.reset()
         os_unfair_lock_lock(&levelLock); _level = 0; os_unfair_lock_unlock(&levelLock)
     }
 

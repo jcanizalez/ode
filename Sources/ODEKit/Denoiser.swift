@@ -105,6 +105,13 @@ public final class Denoiser {
         return Self.collect(SherpaOnnxOnlineSpeechDenoiserFlush(online))
     }
 
+    /// Reset the streaming denoiser's internal state so a new session starts
+    /// clean (call between calls to avoid carrying stale state).
+    public func resetStreaming() {
+        guard let online else { return }
+        SherpaOnnxOnlineSpeechDenoiserReset(online)
+    }
+
     // MARK: - Helpers
 
     private static func collect(_ result: UnsafePointer<SherpaOnnxDenoisedAudio>?) -> [Float] {
