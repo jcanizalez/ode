@@ -45,15 +45,52 @@ final class ODEController: ObservableObject {
     private var meetingTranscriber: Any?  // MeetingTranscriber (macOS 26+)
 
     init() {
+        // Restore persisted settings before wiring anything up.
+        let d = UserDefaults.standard
+        micEnabled = d.object(forKey: Keys.micEnabled) as? Bool ?? false
+        speakerEnabled = d.object(forKey: Keys.speakerEnabled) as? Bool ?? false
+        transcribeEnabled = d.object(forKey: Keys.transcribeEnabled) as? Bool ?? false
+
         refreshDevices()
-        selectedInputID = preferredInputDevice()?.id
-        selectedOutputID = preferredOutputDevice()?.id
+        // Prefer a remembered device (by UID, since IDs change across reboots).
+        selectedInputID = rememberedDevice(uidKey: Keys.inputUID, in: inputDevices)?.id
+            ?? preferredInputDevice()?.id
+        selectedOutputID = rememberedDevice(uidKey: Keys.outputUID, in: outputDevices)?.id
+            ?? preferredOutputDevice()?.id
+
+        micEngine.bypassDenoise = !micEnabled
+        speakerEngine.bypassDenoise = !speakerEnabled
+
         installObservers()
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.micLevel = self.micActive ? self.micEngine.currentLevel : 0
             self.othersLevel = self.speakerActive ? self.speakerEngine.currentLevel : 0
         }
+    }
+
+    // MARK: - Settings persistence
+
+    private enum Keys {
+        static let micEnabled = "ode.micEnabled"
+        static let speakerEnabled = "ode.speakerEnabled"
+        static let transcribeEnabled = "ode.transcribeEnabled"
+        static let inputUID = "ode.inputUID"
+        static let outputUID = "ode.outputUID"
+    }
+
+    private func persistSettings() {
+        let d = UserDefaults.standard
+        d.set(micEnabled, forKey: Keys.micEnabled)
+        d.set(speakerEnabled, forKey: Keys.speakerEnabled)
+        d.set(transcribeEnabled, forKey: Keys.transcribeEnabled)
+        if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
+        if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
+    }
+
+    private func rememberedDevice(uidKey: String, in list: [AudioDevices.Device]) -> AudioDevices.Device? {
+        guard let uid = UserDefaults.standard.string(forKey: uidKey) else { return nil }
+        return list.first { $0.uid == uid }
     }
 
     // MARK: - Master toggle
@@ -70,6 +107,7 @@ final class ODEController: ObservableObject {
         speakerEnabled = turnOn
         micEngine.bypassDenoise = !micEnabled
         speakerEngine.bypassDenoise = !speakerEnabled
+        persistSettings()
         reconcileMic()
         reconcileSpeaker()
     }
@@ -82,20 +120,34 @@ final class ODEController: ObservableObject {
 
     // MARK: - Virtual devices
 
-    /// "ODE Microphone": ODE writes denoised voice here; apps read it as a mic.
+    /// Visible "ODE Microphone" (input-only). Apps select it as their mic; ODE
+    /// watches it for usage. ODE feeds audio via the hidden "ODE Mic Feed".
     var virtualMic: AudioDevices.Device? {
         AudioDevices.all().first {
-            $0.hasOutput && $0.name.localizedCaseInsensitiveContains("ode microphone")
-        } ?? AudioDevices.all().first {
-            $0.hasOutput && $0.name.localizedCaseInsensitiveContains("blackhole")
+            $0.name.localizedCaseInsensitiveContains("ode microphone")
         }
     }
 
-    /// "ODE Speaker": apps play incoming audio here; ODE reads + denoises it.
+    /// Hidden output device that backs ODE Microphone. ODE writes denoised
+    /// voice here; it flows to the visible mic's input behind the scenes.
+    /// Hidden devices aren't enumerated, so resolve it by its known UID.
+    var micFeed: AudioDevices.Device? {
+        AudioDevices.findByUID("ODE-Mic2ch_2_UID")
+    }
+
+    /// Visible "ODE Speaker" (output-only). Apps select it as their speaker; ODE
+    /// watches it for usage and reads the audio via the hidden "ODE Spk Tap".
     var virtualSpeaker: AudioDevices.Device? {
         AudioDevices.all().first {
-            $0.hasInput && $0.name.localizedCaseInsensitiveContains("ode speaker")
+            $0.name.localizedCaseInsensitiveContains("ode speaker")
         }
+    }
+
+    /// Hidden input device that backs ODE Speaker. ODE reads incoming call
+    /// audio here, denoises it, and plays it to your real output.
+    /// Hidden devices aren't enumerated, so resolve it by its known UID.
+    var speakerTap: AudioDevices.Device? {
+        AudioDevices.findByUID("ODE-Spk2ch_2_UID")
     }
 
     var virtualMicInstalled: Bool { virtualMic != nil }
@@ -122,8 +174,9 @@ final class ODEController: ObservableObject {
     // MARK: - Device lists
 
     func refreshDevices() {
-        inputDevices = AudioDevices.all().filter { $0.hasInput && !isLoopback($0) }
-        outputDevices = AudioDevices.all().filter { $0.hasOutput && !isLoopback($0) }
+        let all = AudioDevices.all().filter { !$0.isHidden && !isLoopback($0) }
+        inputDevices = all.filter { $0.hasInput }
+        outputDevices = all.filter { $0.hasOutput }
         if selectedInputID == nil || !inputDevices.contains(where: { $0.id == selectedInputID }) {
             selectedInputID = preferredInputDevice()?.id
         }
@@ -137,29 +190,34 @@ final class ODEController: ObservableObject {
     func toggleMic() {
         micEnabled.toggle()
         micEngine.bypassDenoise = !micEnabled
+        persistSettings()
         reconcileMic()
     }
 
     func toggleSpeaker() {
         speakerEnabled.toggle()
         speakerEngine.bypassDenoise = !speakerEnabled
+        persistSettings()
         reconcileSpeaker()
     }
 
     func toggleTranscribe() {
         transcribeEnabled.toggle()
+        persistSettings()
         reconcileTranscription()
     }
 
     func selectInput(_ id: AudioDeviceID) {
         selectedInputID = id
         if micActive { micEngine.stop(); micActive = false }
+        persistSettings()
         reconcileMic()
     }
 
     func selectOutput(_ id: AudioDeviceID) {
         selectedOutputID = id
         if speakerActive { speakerEngine.stop(); speakerActive = false }
+        persistSettings()
         reconcileSpeaker()
     }
 
@@ -188,14 +246,17 @@ final class ODEController: ObservableObject {
         }
     }
 
-    /// Mic path runs whenever an app reads the ODE Microphone.
+    /// Mic path runs whenever an app reads the ODE Microphone. ODE captures the
+    /// real mic, denoises, and writes to the hidden "ODE Mic Feed" — which the
+    /// visible input-only ODE Microphone exposes to the app.
     private func reconcileMic() {
-        guard let out = virtualMic else { return }
-        let inUse = AudioDevices.isInputInUse(out.id)
+        guard let mic = virtualMic else { return }
+        let inUse = AudioDevices.isInputInUse(mic.id)
         if inUse && !micActive {
-            guard let input = selectedInput, input.id != out.id else { return }
+            guard let input = selectedInput,
+                  let feed = micFeed, input.id != feed.id else { return }
             do {
-                try micEngine.start(inputDevice: input, outputDevice: out, bypass: !micEnabled)
+                try micEngine.start(inputDevice: input, outputDevice: feed, bypass: !micEnabled)
                 micActive = true
             } catch {
                 micActive = false
@@ -209,16 +270,17 @@ final class ODEController: ObservableObject {
         reconcileTranscription()
     }
 
-    /// Speaker path runs whenever an app plays into the ODE Speaker.
+    /// Speaker path runs whenever an app plays into the ODE Speaker. ODE reads
+    /// the incoming audio from the hidden "ODE Spk Tap", denoises it, and plays
+    /// it to your real output device.
     private func reconcileSpeaker() {
         guard let spk = virtualSpeaker else { return }
         let inUse = AudioDevices.isOutputInUse(spk.id)
         if inUse && !speakerActive {
-            guard let realOut = selectedOutput, realOut.id != spk.id else { return }
+            guard let realOut = selectedOutput,
+                  let tap = speakerTap, realOut.id != tap.id else { return }
             do {
-                // Capture from the ODE Speaker (what the app played in), denoise,
-                // and play to your real speakers/headphones.
-                try speakerEngine.start(inputDevice: spk, outputDevice: realOut,
+                try speakerEngine.start(inputDevice: tap, outputDevice: realOut,
                                         bypass: !speakerEnabled)
                 speakerActive = true
             } catch {
@@ -296,7 +358,8 @@ final class ODEController: ObservableObject {
 
     private func isLoopback(_ d: AudioDevices.Device) -> Bool {
         let n = d.name.lowercased()
-        return n.contains("ode microphone") || n.contains("ode speaker")
-            || n.contains("blackhole")
+        // Exclude all ODE virtual devices (visible + hidden feed/tap) and
+        // BlackHole from the user-facing real-device pickers.
+        return n.hasPrefix("ode ") || n.contains("blackhole")
     }
 }

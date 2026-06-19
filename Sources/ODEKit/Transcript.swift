@@ -17,6 +17,17 @@ public struct TranscriptSegment: Codable, Identifiable {
 }
 
 /// A saved meeting transcript.
+/// A saved Ask-anything exchange about a meeting.
+public struct ChatMessage: Codable, Identifiable {
+    public var id = UUID()
+    public let question: String
+    public let answer: String
+    public let date: Date
+    public init(question: String, answer: String, date: Date = Date()) {
+        self.question = question; self.answer = answer; self.date = date
+    }
+}
+
 public struct Transcript: Codable, Identifiable {
     public var id = UUID()
     public var title: String
@@ -24,13 +35,30 @@ public struct Transcript: Codable, Identifiable {
     public var endedAt: Date
     public var segments: [TranscriptSegment]
 
+    // Optional metadata / cached AI output.
+    public var sourceApp: String?          // e.g. "Microsoft Teams", "zoom.us"
+    public var starred: Bool = false
+    public var summary: String?
+    public var keyPoints: [String]?
+    public var actionItems: [String]?
+    public var chat: [ChatMessage] = []    // saved Ask-anything Q&A history
+
     public init(id: UUID = UUID(), title: String, startedAt: Date, endedAt: Date,
-                segments: [TranscriptSegment]) {
+                segments: [TranscriptSegment], sourceApp: String? = nil,
+                starred: Bool = false, summary: String? = nil,
+                keyPoints: [String]? = nil, actionItems: [String]? = nil,
+                chat: [ChatMessage] = []) {
         self.id = id
         self.title = title
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.segments = segments
+        self.sourceApp = sourceApp
+        self.starred = starred
+        self.summary = summary
+        self.keyPoints = keyPoints
+        self.actionItems = actionItems
+        self.chat = chat
     }
 
     public var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
@@ -40,11 +68,42 @@ public struct Transcript: Codable, Identifiable {
         segments.sorted { $0.start < $1.start }
     }
 
+    /// Distinct speakers in first-appearance order.
+    public var speakers: [String] {
+        var seen: [String] = []
+        for s in ordered where !seen.contains(s.speaker) { seen.append(s.speaker) }
+        return seen
+    }
+
+    /// Fraction of total spoken time per speaker (0...1), summing ~1.
+    public var talkTime: [(speaker: String, fraction: Double)] {
+        var totals: [String: Double] = [:]
+        for s in segments {
+            totals[s.speaker, default: 0] += max(0, s.end - s.start)
+        }
+        let sum = totals.values.reduce(0, +)
+        guard sum > 0 else { return speakers.map { ($0, 0) } }
+        return totals.sorted { $0.value > $1.value }
+            .map { ($0.key, $0.value / sum) }
+    }
+
+    public var hasAI: Bool { summary != nil }
+
     /// A readable plain-text rendering.
     public func plainText() -> String {
         let df = DateFormatter()
         df.dateStyle = .medium; df.timeStyle = .short
         var out = "\(title)\n\(df.string(from: startedAt))\n\n"
+        if let summary {
+            out += "SUMMARY\n\(summary)\n\n"
+        }
+        if let kp = keyPoints, !kp.isEmpty {
+            out += "KEY POINTS\n" + kp.map { "• \($0)" }.joined(separator: "\n") + "\n\n"
+        }
+        if let ai = actionItems, !ai.isEmpty {
+            out += "ACTION ITEMS\n" + ai.map { "• \($0)" }.joined(separator: "\n") + "\n\n"
+        }
+        out += "TRANSCRIPT\n"
         for s in ordered {
             let mm = Int(s.start) / 60, ss = Int(s.start) % 60
             out += String(format: "[%02d:%02d] %@: %@\n", mm, ss, s.speaker, s.text)
