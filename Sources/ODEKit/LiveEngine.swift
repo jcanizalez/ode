@@ -191,7 +191,26 @@ public final class LiveEngine {
         set { os_unfair_lock_lock(&bypassLock); _bypass = newValue; os_unfair_lock_unlock(&bypassLock) }
     }
 
-    public init() {}
+    /// Whether Apple's voice processing (acoustic echo cancellation against
+    /// the system output) is active on the capture side. Fixed at creation:
+    /// toggling it on a live engine fires configuration/device-change storms
+    /// that fight the auto-recovery logic — swap the engine instance instead.
+    public let voiceProcessing: Bool
+
+    public init(voiceProcessing: Bool = false) {
+        self.voiceProcessing = voiceProcessing
+        if voiceProcessing {
+            // Configure before anything observes the engine — the change
+            // notifications this fires are harmless at construction time.
+            try? captureEngine.inputNode.setVoiceProcessingEnabled(true)
+            if #available(macOS 14.0, *) {
+                // AEC only — don't duck the rest of the system's audio (the
+                // speaker path plays the actual call through these speakers).
+                captureEngine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+                    .init(enableAdvancedDucking: false, duckingLevel: .min)
+            }
+        }
+    }
 
     /// Optional sink for captured audio (post-resample, 48 kHz mono), used for
     /// transcription. Receives the same audio that is denoised/played.
@@ -209,6 +228,10 @@ public final class LiveEngine {
     /// etc. The owner should stop and re-start the loop.
     public var onConfigurationChange: (() -> Void)?
     private var configObservers: [NSObjectProtocol] = []
+    /// Engine setup (voice processing especially) fires configuration-change
+    /// notifications of its own; reacting to those restarts the engine in a
+    /// loop. Changes within this window of a start are ignored.
+    private var startedAtTime: CFAbsoluteTime = 0
 
     /// True while the loop is meant to run AND both engines are still alive.
     /// After a configuration change kills an engine, this turns false even
@@ -247,6 +270,7 @@ public final class LiveEngine {
     /// denoised result to `outputDevice` (the virtual mic). Passing nil uses the
     /// system defaults. Guards against capturing from the same device we write
     /// to, which would create a feedback loop.
+    ///
     public func start(inputDevice: AudioDevices.Device? = nil,
                       outputDevice: AudioDevices.Device?,
                       bypass: Bool = false) throws {
@@ -276,10 +300,18 @@ public final class LiveEngine {
             // installTap would raise an uncatchable NSException — throw a
             // proper error instead of crashing the app.
             let input = captureEngine.inputNode
-            if let inDev = inputDevice {
+            if let inDev = inputDevice, !voiceProcessing {
+                // VPIO manages its own full-duplex device pair; pinning a
+                // device into it breaks the unit. With echo cancellation on,
+                // capture follows the system default input instead.
                 try setInputDevice(captureEngine, deviceID: inDev.id)
             }
-            let inFormat = input.inputFormat(forBus: 0)
+            var inFormat = input.inputFormat(forBus: 0)
+            if voiceProcessing, inFormat.sampleRate <= 0 {
+                // VPIO defines its format lazily — prepare() materializes it.
+                captureEngine.prepare()
+                inFormat = input.inputFormat(forBus: 0)
+            }
             guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
                 throw NSError(domain: "ode.live", code: -11,
                               userInfo: [NSLocalizedDescriptionKey:
@@ -344,10 +376,14 @@ public final class LiveEngine {
             configObservers.append(nc.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
             ) { [weak self] _ in
-                self?.onConfigurationChange?()
+                guard let self else { return }
+                // Ignore the change events our own setup produces.
+                guard CFAbsoluteTimeGetCurrent() - self.startedAtTime > 1.0 else { return }
+                self.onConfigurationChange?()
             })
         }
 
+        startedAtTime = CFAbsoluteTimeGetCurrent()
         isRunning = true
     }
 
@@ -367,10 +403,16 @@ public final class LiveEngine {
         os_unfair_lock_lock(&levelLock)
         let peak = _sessionPeak
         os_unfair_lock_unlock(&levelLock)
-        let line = String(format: "%@ [%@] wrote=%d played=%d underruns=%d skips=%d inPeak=%.4f maxWriteGap=%dms slowWrites=%d",
-                          ISO8601DateFormatter().string(from: Date()), label,
-                          s.written, s.read, s.underruns, s.skips, peak,
+        let line = String(format: "[%@] wrote=%d played=%d underruns=%d skips=%d inPeak=%.4f maxWriteGap=%dms slowWrites=%d",
+                          label, s.written, s.read, s.underruns, s.skips, peak,
                           s.maxWriteGapMs, s.slowWrites)
+        Self.diagnostic(line)
+    }
+
+    /// Append a timestamped line to the field-diagnostics log (NSLog mirror).
+    /// Unified-log access has proven unreliable when debugging in the field.
+    public static func diagnostic(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)"
         NSLog("ODE live: %@", line)
         let dir = FileManager.default.urls(for: .applicationSupportDirectory,
                                            in: .userDomainMask).first!

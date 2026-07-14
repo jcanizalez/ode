@@ -62,7 +62,22 @@ sleep 4   # devices unhide + observers install
 BEFORE=$(ls "$STORE"/*.json 2>/dev/null | wc -l | tr -d ' ')
 
 # --- 4. Run the fake call ---
-"$ODE_BIN" fakecall --play "$AUDIO" --record "$MIC_OUT"
+# A silent mic-path is EXPECTED when echo cancellation works and nobody is
+# speaking at the real mic, so don't fail on fakecall's silence exit code;
+# judge the mic path by engine throughput below instead.
+"$ODE_BIN" fakecall --play "$AUDIO" --record "$MIC_OUT" || \
+    echo "(mic-path silence — expected with echo cancellation on)"
+
+# --- 4b. The engines must have actually pumped audio ---
+STATS_LOG="$HOME/Library/Application Support/ODE/engine-stats.log"
+MIC_STATS=$(grep "\[mic\]" "$STATS_LOG" 2>/dev/null | tail -1)
+echo "mic session:      $MIC_STATS"
+echo "speaker session:  $(grep "\[speaker\]" "$STATS_LOG" 2>/dev/null | tail -1)"
+WROTE=$(echo "$MIC_STATS" | sed -n 's/.*wrote=\([0-9]*\).*/\1/p')
+if [ "${WROTE:-0}" -lt 100000 ]; then
+    echo "✗ mic engine barely ran (wrote=${WROTE:-0}) — pipeline broken"
+    exit 1
+fi
 
 # --- 5. Wait for the transcript to finalize and save ---
 echo "Waiting for transcript to save…"

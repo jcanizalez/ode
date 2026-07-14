@@ -196,6 +196,16 @@ struct PanelView: View {
                         }
                     }
                 }
+                Button {
+                    controller.toggleEchoCancel()
+                } label: {
+                    HStack {
+                        Text("Echo cancellation")
+                        if controller.echoCancelEnabled {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
             } label: {
                 Text(controller.asrEngine.displayName)
                     .font(.system(size: 10, weight: .semibold))

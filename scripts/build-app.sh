@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
-ODE_VERSION="${ODE_VERSION:-0.5.4}"
+ODE_VERSION="${ODE_VERSION:-0.7.0}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp

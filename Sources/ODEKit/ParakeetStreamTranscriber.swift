@@ -30,6 +30,10 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
     /// When a hypothesis is confirmed, this span timestamps the emitted
     /// segment (needed for transcript ordering and speaker diarization).
     private var pendingRange: (start: TimeInterval, end: TimeInterval)?
+    /// End of the last emitted segment: segments with no token timings anchor
+    /// here so they still sort after their predecessor instead of falling
+    /// back to (much later) wall-clock arrival time.
+    private var lastEmittedEnd: TimeInterval = 0
 
     /// Parakeet consumes 16 kHz mono float.
     private static let feedFormat = AVAudioFormat(
@@ -177,6 +181,7 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
         emitLock.lock()
         emittedText = ""
         pendingRange = nil
+        lastEmittedEnd = 0
         emitLock.unlock()
     }
 
@@ -207,12 +212,22 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
             delta = text.trimmingCharacters(in: .whitespacesAndNewlines)
             emittedText += (emittedText.isEmpty ? "" : " ") + text
         }
-        let range = pendingRange
+        // Timestamp: token-timing span when available; otherwise anchor just
+        // after the previous segment so ordering stays correct. Never move
+        // backwards — spans can overlap across sliding windows.
+        let start: TimeInterval
+        let end: TimeInterval
+        if let range = pendingRange {
+            start = max(range.start, lastEmittedEnd)
+            end = max(range.end, start)
+        } else {
+            start = lastEmittedEnd
+            end = lastEmittedEnd
+        }
+        if !delta.isEmpty { lastEmittedEnd = end }
         emitLock.unlock()
 
         guard !delta.isEmpty else { return }
-        onSegment?(SpeechSegment(start: range?.start ?? 0,
-                                 end: range?.end ?? 0,
-                                 text: delta))
+        onSegment?(SpeechSegment(start: start, end: end, text: delta))
     }
 }

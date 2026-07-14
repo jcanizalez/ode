@@ -2,101 +2,107 @@
 
 **ODE** is named after the *ode* — a lyric poem written in celebration of
 something. This one is a celebration of **your voice**: an open-source,
-real-time AI noise-suppression tool for macOS that strips away background noise
-so people hear *you*, clearly. A free, open alternative to proprietary
-AI noise-suppression tools.
+real-time AI meeting companion for macOS. It removes background noise in both
+directions, transcribes and summarizes your meetings, and answers questions
+about them — **entirely on-device**. Nothing you say ever leaves your Mac.
 
 *(ODE also happens to stand for **Open Denoise Engine** — open source, neural
 denoising, real-time engine.)*
 
-ODE captures your microphone, removes background noise with a neural network,
-and exposes a virtual **"ODE Microphone"** that any app (Zoom, Teams, Discord,
-browsers) can select.
+## Features
 
-> Status: **Phases 0–3 complete + DPDFNet engine.** Working CLI, real-time
-> engine, and a glass menu-bar app with a "Test the ODE magic"
-> before/after tester. Installer is next.
+**🎙 Noise cancellation, both directions** — DPDFNet, a full-band 48 kHz deep-
+filtering speech model (~28 dB of noise removed, ~98% of voice energy kept):
+- **Cancel my noise** — your mic is denoised before Zoom/Teams/Discord/browsers
+  hear it, via the virtual **ODE Microphone**
+- **Cancel others' noise** — incoming call audio is denoised before you hear
+  it, via the virtual **ODE Speaker**
+
+The virtual devices appear only while ODE is running — quit the app and they
+vanish from every picker (a crash-safe watchdog in the driver guarantees it).
+
+**📝 On-device meeting transcription** — automatic whenever a call uses an ODE
+device. Two switchable engines:
+- **Apple** SpeechAnalyzer (macOS 26)
+- **Parakeet TDT v3** (NVIDIA, via CoreML on the Neural Engine) — automatic
+  language detection across 25 languages, excellent Spanish
+
+**👥 Speaker detection** — remote participants are diarized into
+"Speaker 1/2/…" (NVIDIA Sortformer, on-device), on top of the built-in
+You/Others separation.
+
+**⚡️ Live meeting view** — watch the transcript grow in real time, and **ask
+questions about the meeting while it's still happening** ("what did they say
+while I was away?"), answered by Apple's on-device foundation model.
+
+**🧠 Meeting notes** — searchable history with AI summary, key points, action
+items, talk-time per speaker, and a persistent Q&A thread per meeting.
+
+**🔊 A/B tester** — record a clip and flip between raw and denoised while it
+loops, to hear exactly what ODE removes.
+
+Everything above runs locally: no accounts, no cloud, no bots joining your
+calls. See `docs/ROADMAP.md` for what's next (v0.7.0: echo cancellation).
 
 ## How it works
 
 ```
- Real mic ──capture──► ODE Engine ──AI denoise──► clean audio ──► "ODE Microphone"
-                                   DPDFNet (sherpa-onnx)              picked by any app
+ Real mic ──► ODE (denoise) ──► "ODE Microphone" ──► call app
+ call app ──► "ODE Speaker" ──► ODE (denoise) ──► your real speakers
+                     │
+                     └─► transcription (Apple / Parakeet) ─► diarization
+                            └─► live view · Q&A · summaries (on-device AI)
 ```
 
-The denoising "brain" is **DPDFNet**, a full-band (48 kHz) deep-filtering speech
-enhancement model, run via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
-(Apache-2.0). It was chosen after an on-device bake-off against RNNoise and
-GTCRN: DPDFNet removed ~28 dB of background noise while preserving ~98% of voice
-energy in full-band 48 kHz, sounding the most natural — at ~7× faster than
-real-time on Apple Silicon.
+The virtual devices are CoreAudio HAL drivers derived from
+[BlackHole](https://github.com/ExistentialAudio/BlackHole), patched for
+dynamic visibility. The denoiser is **DPDFNet** via
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx); speech-to-text and
+diarization run through [FluidAudio](https://github.com/FluidInference/FluidAudio)
+CoreML models on the Apple Neural Engine.
 
-## Build
+## Install
 
-Requires macOS 13+ and a Swift 5.9+ toolchain.
+Grab the notarized installer from
+[Releases](https://github.com/jcanizalez/ode/releases) — it installs ODE.app
+and both audio drivers, and starts ODE automatically. macOS 14+ (Apple
+Silicon); transcription AI features need macOS 26.
+
+## Build from source
+
+Requires macOS 14+, Swift 6 toolchain; full Xcode for the drivers/tests.
 
 ```sh
-./scripts/fetch-deps.sh    # downloads sherpa-onnx libs + DPDFNet model (~90 MB)
+./scripts/fetch-deps.sh      # sherpa-onnx libs + DPDFNet model (~90 MB)
 swift build -c release
+./scripts/build-app.sh       # dist/ODE.app (signs with your best identity)
+./scripts/build-driver.sh    # dist/*.driver (virtual devices)
+./scripts/build-pkg.sh       # dist/ODE-x.y.z.pkg installer
 ```
 
-## Usage (CLI)
+Releases are automated: pushing a `v*` tag builds, signs, notarizes and
+publishes the installer via GitHub Actions.
 
-Denoise an existing audio file:
+## CLI
 
 ```sh
-.build/release/ode file noisy.wav clean.wav
+ode file noisy.wav clean.wav                 # denoise a recording
+ode mic 8 raw.wav clean.wav                  # record & compare
+ode devices                                  # list CoreAudio devices
+ode live --out "ODE Microphone"              # real-time loop, headless
+ode transcribe audio.wav --engine parakeet --diarize
+ode fakecall --play meeting.wav              # simulate a call end-to-end
 ```
 
-Record from your mic and write raw + denoised WAVs to compare
-(grant Microphone permission when prompted):
+## Testing
 
 ```sh
-.build/release/ode mic 8 raw.wav clean.wav
+./scripts/run-tests.sh       # unit tests + coverage
+./scripts/e2e-test.sh        # full pipeline test — no real call needed
 ```
 
-### Measured result (DPDFNet, on a real 30 s voice clip)
-
-| Metric | Result |
-|--------|--------|
-| Background noise during pauses | −28 dB |
-| Voice energy retained (200 Hz–3 kHz) | ~98% |
-| Speed (real-time factor) | ~0.14 (≈7× faster than real-time) |
-
-## Roadmap
-
-- [x] **Phase 0** — Repo scaffold, Swift package
-- [x] **Phase 1** — CLI: mic/file capture → denoise → WAV
-- [x] **Phase 2** — Real-time streaming engine (`ode live`) + device routing + virtual-mic setup
-- [x] **Phase 3** — Glass menu-bar app + "Test the ODE magic" A/B tester
-- [x] **Engine upgrade** — replaced RNNoise with DPDFNet (sherpa-onnx) after an on-device bake-off
-- [ ] **Phase 4** — Signed/notarized `.pkg` installer
-- [ ] **Phase 5** — Acoustic echo cancellation (WebRTC APM)
-
-## Menu-bar app
-
-```sh
-./scripts/build-app.sh     # produces dist/ODE.app (ad-hoc signed)
-open dist/ODE.app          # waveform icon appears in the menu bar
-```
-
-From the glass panel: flip **Cancel my noise**, pick the **ODE Microphone**
-output device, or tap **✨ Test the ODE magic** to record a clip and hear it
-played back *with* and *without* ODE — flip the Off/On switch to compare
-instantly while it loops.
-
-## Real-time usage
-
-Install the virtual microphone, then run the live denoiser into it:
-
-```sh
-./scripts/install-virtual-mic.sh         # installs a loopback device
-ode live --out "BlackHole 2ch"           # mic -> denoise -> virtual device
-# pick that device as your mic in Zoom/Teams/Discord/browser
-```
-
-`ode devices` lists everything CoreAudio sees. See `docs/VIRTUAL_MIC.md` for
-the branded "ODE Microphone" build.
+See `docs/TESTING.md` for the fake-call workflow, audio-quality diagnostics
+(`engine-stats.log`), and the macOS permission traps to avoid.
 
 ## Project layout
 
@@ -104,22 +110,26 @@ the branded "ODE Microphone" build.
 Package.swift
 Sources/
   CSherpa/         C-API bridge to the sherpa-onnx static libraries
-  ODEKit/          Shared engine library (DPDFNet denoise, audio I/O, devices, live loop)
-  ode/             CLI front-end (file / mic / devices / live)
-  ODEApp/          Menu-bar app (AppDelegate + Before/After tester)
-third_party/sherpa/  Vendored sherpa-onnx libs + header (via scripts/fetch-deps.sh)
+  ODEKit/          Engine library: denoise, live loop, devices, transcription,
+                   diarization, meeting AI, transcripts
+  ode/             CLI front-end
+  ODEApp/          Menu-bar app: panel, meetings window, live view, A/B tester
+Tests/ODEKitTests/ Unit tests
+third_party/sherpa/  Vendored sherpa-onnx libs (via scripts/fetch-deps.sh)
 Resources/         DPDFNet model weights (via scripts/fetch-deps.sh)
 scripts/
   fetch-deps.sh            Downloads sherpa-onnx libs + DPDFNet model
-  install-virtual-mic.sh   Installs a loopback device (BlackHole)
   build-app.sh             Builds & signs dist/ODE.app
   build-driver.sh          Builds the ODE virtual-audio drivers
   build-pkg.sh             Builds the dist/ODE-x.y.z.pkg installer
+  notarize.sh              Notarizes + staples an installer
   run-tests.sh             Unit tests + coverage report
   e2e-test.sh              Full pipeline test without a real call
 docs/
-  VIRTUAL_MIC.md           Virtual-microphone setup & branded build
+  ROADMAP.md               Feature roadmap & competitive landscape
   TESTING.md               How to test everything without joining a call
+  VIRTUAL_MIC.md           Virtual-microphone internals & branded build
+.github/workflows/         CI (build+test) and Release (tag → notarized pkg)
 ```
 
 ## Licensing & attribution
@@ -127,6 +137,7 @@ docs/
 ODE's own code is released under the MIT License (see `LICENSE`).
 Noise suppression uses **DPDFNet** via
 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0), which embeds
-ONNX Runtime (MIT). The virtual-microphone device is based on
-[BlackHole](https://github.com/ExistentialAudio/BlackHole) (MIT).
-
+ONNX Runtime (MIT). Speech-to-text and diarization use
+[FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) running
+NVIDIA Parakeet and Sortformer models (CC-BY-4.0). The virtual audio devices
+are based on [BlackHole](https://github.com/ExistentialAudio/BlackHole) (MIT).

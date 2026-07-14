@@ -19,6 +19,11 @@ final class ODEController: ObservableObject {
     // Mic path ("cancel my noise")
     @Published var micEnabled = false
     @Published var micActive = false
+    /// Acoustic echo cancellation on the mic path (Apple voice processing):
+    /// without headphones, the mic otherwise re-captures whatever the
+    /// speakers play — the remote side hears themselves and speaker audio
+    /// bleeds into the "You" transcript.
+    @Published var echoCancelEnabled = true
     @Published var inputDevices: [AudioDevices.Device] = []
     @Published var selectedInputID: AudioDeviceID?
 
@@ -41,7 +46,9 @@ final class ODEController: ObservableObject {
     @Published var micLevel: Float = 0
     @Published var othersLevel: Float = 0
 
-    private let micEngine = LiveEngine()
+    /// Mic engine is recreated when echo cancellation toggles (voice
+    /// processing is fixed at engine creation — see LiveEngine.voiceProcessing).
+    private var micEngine: LiveEngine
     private let speakerEngine = LiveEngine()
     /// Engine start/stop performs blocking CoreAudio calls (device pinning,
     /// TCC checks) that can stall for seconds. They run here so the main
@@ -66,6 +73,9 @@ final class ODEController: ObservableObject {
         asrEngine = d.string(forKey: Keys.asrEngine)
             .flatMap(TranscriptionEngine.init(rawValue:)) ?? .apple
         detectSpeakers = d.object(forKey: Keys.detectSpeakers) as? Bool ?? false
+        let aec = d.object(forKey: Keys.echoCancel) as? Bool ?? true
+        echoCancelEnabled = aec
+        micEngine = LiveEngine(voiceProcessing: aec)
 
         // The virtual devices are hidden while ODE isn't running, so users
         // never see a dead device in pickers. Show them now, and keep pinging
@@ -115,6 +125,7 @@ final class ODEController: ObservableObject {
         static let transcribeEnabled = "ode.transcribeEnabled"
         static let asrEngine = "ode.asrEngine"
         static let detectSpeakers = "ode.detectSpeakers"
+        static let echoCancel = "ode.echoCancel"
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
     }
@@ -126,6 +137,7 @@ final class ODEController: ObservableObject {
         d.set(transcribeEnabled, forKey: Keys.transcribeEnabled)
         d.set(asrEngine.rawValue, forKey: Keys.asrEngine)
         d.set(detectSpeakers, forKey: Keys.detectSpeakers)
+        d.set(echoCancelEnabled, forKey: Keys.echoCancel)
         if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
         if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
     }
@@ -339,6 +351,29 @@ final class ODEController: ObservableObject {
         if engine == .parakeet { prefetchParakeetModel() }
     }
 
+    /// Toggle acoustic echo cancellation. Voice processing is fixed per
+    /// engine instance, so the mic engine is swapped for a new one (and the
+    /// path restarts immediately when mid-call).
+    func toggleEchoCancel() {
+        echoCancelEnabled.toggle()
+        persistSettings()
+
+        let old = micEngine
+        let wasActive = micActive
+        micActive = false
+        engineQueue.async { old.stop() }
+
+        let fresh = LiveEngine(voiceProcessing: echoCancelEnabled)
+        fresh.label = "mic"
+        fresh.bypassDenoise = !micEnabled
+        fresh.onCapturedAudio = old.onCapturedAudio   // keep transcription fed
+        fresh.onConfigurationChange = { [weak self] in
+            DispatchQueue.main.async { self?.restartMicPath() }
+        }
+        micEngine = fresh
+        if wasActive { reconcileMic() }
+    }
+
     /// Toggle "Speaker 1/2/…" sub-labels for remote participants. Applies to
     /// the next transcription session; prefetches the diarization model.
     func toggleDetectSpeakers() {
@@ -445,9 +480,10 @@ final class ODEController: ObservableObject {
             let bypass = !micEnabled
             engineQueue.async { [weak self, micEngine] in
                 do {
-                    try micEngine.start(inputDevice: input, outputDevice: feed, bypass: bypass)
+                    try micEngine.start(inputDevice: input, outputDevice: feed,
+                                        bypass: bypass)
                 } catch {
-                    NSLog("ODE: mic engine failed: \(error.localizedDescription)")
+                    LiveEngine.diagnostic("[mic] START FAILED: \(error.localizedDescription)")
                     DispatchQueue.main.async { self?.micActive = false }
                 }
             }
@@ -477,7 +513,7 @@ final class ODEController: ObservableObject {
                     try speakerEngine.start(inputDevice: tap, outputDevice: realOut,
                                             bypass: bypass)
                 } catch {
-                    NSLog("ODE: speaker engine failed: \(error.localizedDescription)")
+                    LiveEngine.diagnostic("[speaker] START FAILED: \(error.localizedDescription)")
                     DispatchQueue.main.async { self?.speakerActive = false }
                 }
             }
