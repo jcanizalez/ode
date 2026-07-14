@@ -170,6 +170,29 @@ struct PanelView: View {
             }
             .buttonStyle(.plain)
 
+            // Engine picker: Apple SpeechAnalyzer vs Parakeet v3. Applies to
+            // the next transcription session.
+            Menu {
+                ForEach(TranscriptionEngine.allCases, id: \.self) { engine in
+                    Button {
+                        controller.setEngine(engine)
+                    } label: {
+                        HStack {
+                            Text(engine.displayName)
+                            if controller.asrEngine == engine {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(controller.asrEngine.displayName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
             Toggle("", isOn: Binding(get: { controller.transcribeEnabled },
                                      set: { _ in controller.toggleTranscribe() }))
                 .toggleStyle(.switch)

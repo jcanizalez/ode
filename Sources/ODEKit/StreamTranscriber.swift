@@ -9,13 +9,9 @@ import Speech
 /// One instance transcribes one stream (e.g. your mic, or the incoming audio),
 /// so the caller can attach a speaker label to each.
 @available(macOS 26.0, *)
-public final class StreamTranscriber {
+public final class StreamTranscriber: SpeechTranscribing {
     /// A finalized chunk of recognized speech with timing relative to session start.
-    public struct Segment {
-        public let start: TimeInterval
-        public let end: TimeInterval
-        public let text: String
-    }
+    public typealias Segment = SpeechSegment
 
     private let locale: Locale
     private var analyzer: SpeechAnalyzer?

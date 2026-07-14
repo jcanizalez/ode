@@ -9,7 +9,12 @@ let sherpaLibDir = "\(pkgDir)/third_party/sherpa/lib"
 
 let package = Package(
     name: "ode",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
+    dependencies: [
+        // Parakeet TDT v3 ASR (CoreML, Apple Neural Engine) for the
+        // alternative meeting-transcription engine.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.0"),
+    ],
     targets: [
         .target(
             name: "CSherpa",
@@ -19,7 +24,10 @@ let package = Package(
         ),
         .target(
             name: "ODEKit",
-            dependencies: ["CSherpa"],
+            dependencies: [
+                "CSherpa",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+            ],
             path: "Sources/ODEKit",
             linkerSettings: [
                 .unsafeFlags([

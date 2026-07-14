@@ -31,6 +31,7 @@ final class ODEController: ObservableObject {
     // Transcription
     @Published var transcribeEnabled = false
     @Published var transcribing = false
+    @Published var asrEngine: TranscriptionEngine = .apple
 
     // Live audio levels (0...1) for the meters.
     @Published var micLevel: Float = 0
@@ -53,6 +54,8 @@ final class ODEController: ObservableObject {
         micEnabled = d.object(forKey: Keys.micEnabled) as? Bool ?? false
         speakerEnabled = d.object(forKey: Keys.speakerEnabled) as? Bool ?? false
         transcribeEnabled = d.object(forKey: Keys.transcribeEnabled) as? Bool ?? false
+        asrEngine = d.string(forKey: Keys.asrEngine)
+            .flatMap(TranscriptionEngine.init(rawValue:)) ?? .apple
 
         // The virtual devices are hidden while ODE isn't running, so users
         // never see a dead device in pickers. Show them now, and keep pinging
@@ -98,6 +101,7 @@ final class ODEController: ObservableObject {
         static let micEnabled = "ode.micEnabled"
         static let speakerEnabled = "ode.speakerEnabled"
         static let transcribeEnabled = "ode.transcribeEnabled"
+        static let asrEngine = "ode.asrEngine"
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
     }
@@ -107,6 +111,7 @@ final class ODEController: ObservableObject {
         d.set(micEnabled, forKey: Keys.micEnabled)
         d.set(speakerEnabled, forKey: Keys.speakerEnabled)
         d.set(transcribeEnabled, forKey: Keys.transcribeEnabled)
+        d.set(asrEngine.rawValue, forKey: Keys.asrEngine)
         if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
         if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
     }
@@ -305,6 +310,14 @@ final class ODEController: ObservableObject {
         reconcileTranscription()
     }
 
+    /// Switch speech-to-text engines. Applies to the *next* transcription
+    /// session; one already in progress keeps its engine.
+    func setEngine(_ engine: TranscriptionEngine) {
+        guard engine != asrEngine else { return }
+        asrEngine = engine
+        persistSettings()
+    }
+
     func selectInput(_ id: AudioDeviceID) {
         selectedInputID = id
         if micActive { micEngine.stop(); micActive = false }
@@ -410,7 +423,8 @@ final class ODEController: ObservableObject {
 
     @available(macOS 26.0, *)
     private func startTranscription() {
-        let mt = MeetingTranscriber()
+        let engine = asrEngine
+        let mt = MeetingTranscriber(engine: engine)
         meetingTranscriber = mt
         transcribing = true
 
@@ -420,7 +434,7 @@ final class ODEController: ObservableObject {
 
         Task {
             do {
-                try await MeetingTranscriber.ensureModel()
+                try await MeetingTranscriber.ensureModel(engine: engine)
                 try await mt.start()
             } catch {
                 NSLog("ODE: transcription start failed: \(error.localizedDescription)")

@@ -6,17 +6,29 @@ import AVFoundation
 /// timestamped transcript and saved when the meeting ends.
 @available(macOS 26.0, *)
 public final class MeetingTranscriber {
-    private let you = StreamTranscriber()
-    private let others = StreamTranscriber()
+    private let you: any SpeechTranscribing
+    private let others: any SpeechTranscribing
     private let lock = NSLock()
     private var segments: [TranscriptSegment] = []
     private var startedAt = Date()
     private var running = false
 
-    public init() {}
+    public init(engine: TranscriptionEngine = .apple) {
+        switch engine {
+        case .apple:
+            you = StreamTranscriber()
+            others = StreamTranscriber()
+        case .parakeet:
+            you = ParakeetStreamTranscriber()
+            others = ParakeetStreamTranscriber()
+        }
+    }
 
-    public static func ensureModel() async throws {
-        try await StreamTranscriber.ensureModel()
+    public static func ensureModel(engine: TranscriptionEngine = .apple) async throws {
+        switch engine {
+        case .apple: try await StreamTranscriber.ensureModel()
+        case .parakeet: try await ParakeetStreamTranscriber.ensureModel()
+        }
     }
 
     /// Begin a session. Wire `feedMic`/`feedOthers` to the engine audio taps.
@@ -30,7 +42,7 @@ public final class MeetingTranscriber {
         try await others.start()
     }
 
-    private func add(_ speaker: String, _ seg: StreamTranscriber.Segment) {
+    private func add(_ speaker: String, _ seg: SpeechSegment) {
         let elapsedBase = Date().timeIntervalSince(startedAt)
         // The transcriber's times are relative to its own stream start, which is
         // the meeting start, so use them directly; fall back to wall-clock.

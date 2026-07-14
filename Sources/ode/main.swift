@@ -166,39 +166,60 @@ case "watch":
     dispatchMain()
 
 case "transcribe":
-    // Debug: transcribe a WAV file and print timestamped segments.
-    guard args.count >= 3 else { print("usage: ode transcribe <audio.wav>"); exit(1) }
-    let url = URL(fileURLWithPath: args[2])
-    if #available(macOS 26.0, *) {
-        let sema = DispatchSemaphore(value: 0)
-        Task {
-            do {
-                print("Ensuring transcription model…")
-                try await StreamTranscriber.ensureModel()
-                let t = StreamTranscriber()
-                t.onSegment = { seg in
-                    print(String(format: "[%6.2f–%6.2f] %@", seg.start, seg.end, seg.text))
-                }
-                try await t.start()
-                let file = try AVAudioFile(forReading: url)
-                let fmt = file.processingFormat
-                let frames = AVAudioFrameCount(file.length)
-                if let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) {
-                    try file.read(into: buf)
-                    t.append(buf)
-                }
-                await t.finish()
-                print("--- done ---")
-            } catch {
-                print("Error: \(error.localizedDescription)")
-            }
-            sema.signal()
-        }
-        sema.wait()
-    } else {
-        print("Transcription requires macOS 26+.")
-        exit(1)
+    // Debug: transcribe an audio file and print timestamped segments.
+    // --engine picks the speech-to-text engine (default: apple).
+    guard args.count >= 3 else {
+        print("usage: ode transcribe <audio.wav> [--engine apple|parakeet]"); exit(1)
     }
+    let url = URL(fileURLWithPath: args[2])
+    var engineChoice = "apple"
+    if let idx = args.firstIndex(of: "--engine"), idx + 1 < args.count {
+        engineChoice = args[idx + 1]
+    }
+    let sema = DispatchSemaphore(value: 0)
+    Task {
+        do {
+            let t: any SpeechTranscribing
+            switch engineChoice {
+            case "parakeet":
+                print("Ensuring Parakeet model (first run downloads the weights)…")
+                try await ParakeetStreamTranscriber.ensureModel()
+                t = ParakeetStreamTranscriber()
+            case "apple":
+                guard #available(macOS 26.0, *) else {
+                    print("The apple engine requires macOS 26+. Try --engine parakeet.")
+                    exit(1)
+                }
+                print("Ensuring Apple transcription model…")
+                try await StreamTranscriber.ensureModel()
+                t = StreamTranscriber()
+            default:
+                print("Unknown engine '\(engineChoice)' (use apple or parakeet)")
+                exit(1)
+            }
+            t.onSegment = { seg in
+                print(String(format: "[%6.2f–%6.2f] %@", seg.start, seg.end, seg.text))
+            }
+            try await t.start()
+            // Feed in ~1 s chunks to exercise the streaming path. (Guard on
+            // framePosition: reading at EOF throws a generic ObjC error.)
+            let file = try AVAudioFile(forReading: url)
+            let fmt = file.processingFormat
+            let chunkFrames = AVAudioFrameCount(fmt.sampleRate)
+            while file.framePosition < file.length {
+                guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunkFrames) else { break }
+                try file.read(into: buf, frameCount: chunkFrames)
+                if buf.frameLength == 0 { break }
+                t.append(buf)
+            }
+            await t.finish()
+            print("--- done ---")
+        } catch {
+            print("Error: \(error.localizedDescription)")
+        }
+        sema.signal()
+    }
+    sema.wait()
 
 default:
     usage()
