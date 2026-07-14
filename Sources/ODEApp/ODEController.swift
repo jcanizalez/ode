@@ -84,6 +84,8 @@ final class ODEController: ObservableObject {
 
         micEngine.bypassDenoise = !micEnabled
         speakerEngine.bypassDenoise = !speakerEnabled
+        micEngine.label = "mic"
+        speakerEngine.label = "speaker"
 
         installObservers()
         installHardwareObservers()

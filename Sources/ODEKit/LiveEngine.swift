@@ -25,6 +25,26 @@ final class RingBuffer {
     private var primed = false
     private var lock = os_unfair_lock()
 
+    // Session diagnostics (read via `stats`).
+    private var totalWritten = 0
+    private var totalRead = 0
+    private var underruns = 0
+    private var skips = 0
+    private var lastWriteAt: CFAbsoluteTime = 0
+    private var maxWriteGapMs = 0
+    private var slowWrites = 0   // inter-write gaps > 150 ms
+
+    struct Stats {
+        let written: Int; let read: Int; let underruns: Int; let skips: Int
+        let maxWriteGapMs: Int; let slowWrites: Int
+    }
+    var stats: Stats {
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        return Stats(written: totalWritten, read: totalRead,
+                     underruns: underruns, skips: skips,
+                     maxWriteGapMs: maxWriteGapMs, slowWrites: slowWrites)
+    }
+
     init(capacity: Int, prefill: Int = 0, maxFill: Int? = nil) {
         self.capacity = capacity
         self.prefill = min(prefill, capacity)
@@ -53,6 +73,14 @@ final class RingBuffer {
             }
             writeIdx = (writeIdx + n) % capacity
             filled += n
+            totalWritten += n
+            let now = CFAbsoluteTimeGetCurrent()
+            if lastWriteAt > 0 {
+                let gapMs = Int((now - lastWriteAt) * 1000)
+                if gapMs > maxWriteGapMs { maxWriteGapMs = gapMs }
+                if gapMs > 150 { slowWrites += 1 }
+            }
+            lastWriteAt = now
             if filled > capacity {                  // overwrote oldest
                 readIdx = writeIdx
                 filled = capacity
@@ -63,6 +91,7 @@ final class RingBuffer {
                 let drop = filled - max(prefill, 1)
                 readIdx = (readIdx + drop) % capacity
                 filled -= drop
+                skips += 1
             }
         }
     }
@@ -84,11 +113,13 @@ final class RingBuffer {
         }
         readIdx = (readIdx + n) % capacity
         filled -= n
+        totalRead += n
         if n < count {
             // Underrun: pad with silence and re-arm the cushion so we rebuffer
             // instead of stuttering.
             memset(out + n, 0, (count - n) * MemoryLayout<Float>.size)
             primed = false
+            underruns += 1
         }
     }
 
@@ -96,6 +127,8 @@ final class RingBuffer {
     func reset() {
         os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
         readIdx = 0; writeIdx = 0; filled = 0; primed = false
+        totalWritten = 0; totalRead = 0; underruns = 0; skips = 0
+        lastWriteAt = 0; maxWriteGapMs = 0; slowWrites = 0
     }
 }
 
@@ -106,17 +139,48 @@ public final class LiveEngine {
     private let captureEngine = AVAudioEngine()
     private let playbackEngine = AVAudioEngine()
     private let denoiser = Denoiser()
-    /// 100 ms jitter cushion before playback starts; backlog capped at 500 ms
-    /// so a transient stall can't permanently add latency to the call.
+    /// 200 ms jitter cushion before playback starts: capture taps and the
+    /// streaming denoiser both deliver in ~100 ms bursts, so a 100 ms cushion
+    /// sat at the edge and underran on every scheduling hiccup (audible as
+    /// periodic dropouts). Backlog capped at 500 ms so a transient stall can't
+    /// permanently add latency to the call.
     private let ring = RingBuffer(capacity: 48_000 * 4,
-                                  prefill: 4_800,
+                                  prefill: 9_600,
                                   maxFill: 24_000)
+
+    /// Label used in diagnostics ("mic" / "speaker").
+    public var label = "engine"
     /// Denoise inference runs here, not on the capture tap thread — a slow
     /// inference must never stall the audio engine's delivery pipeline.
     private let processQueue = DispatchQueue(label: "ode.live.process",
                                              qos: .userInteractive)
     private var sourceNode: AVAudioSourceNode!
     private var isRunning = false
+
+    /// Persistent capture-format converter. Creating a converter per buffer
+    /// (AudioIO.resampleToMono48k) discards the resampler's priming samples on
+    /// every call — when the capture device runs at a different rate this
+    /// silently loses ~10–15% of the audio, draining the ring faster than it
+    /// fills (heard as periodic dropouts).
+    private var captureConverter: AVAudioConverter?
+
+    private func convertToMono48k(_ buffer: AVAudioPCMBuffer) -> [Float] {
+        let dst = AudioIO.monoFormat
+        if buffer.format == dst { return AudioIO.bufferToArray(buffer) }
+        if captureConverter == nil || captureConverter?.inputFormat != buffer.format {
+            captureConverter = AVAudioConverter(from: buffer.format, to: dst)
+        }
+        guard let converter = captureConverter else { return AudioIO.bufferToArray(buffer) }
+        let ratio = dst.sampleRate / buffer.format.sampleRate
+        let cap = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1024)
+        guard let out = AVAudioPCMBuffer(pcmFormat: dst, frameCapacity: cap) else { return [] }
+        var fed = false
+        converter.convert(to: out, error: nil) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true; status.pointee = .haveData; return buffer
+        }
+        return AudioIO.bufferToArray(out)
+    }
 
     /// When true, audio passes through untouched (no denoising). Can be flipped
     /// live while the engine runs — the audio keeps flowing either way.
@@ -157,18 +221,25 @@ public final class LiveEngine {
     /// for a live audio meter. Resets to 0 when the engine stops.
     private var levelLock = os_unfair_lock()
     private var _level: Float = 0
+    private var _sessionPeak: Float = 0
     public var currentLevel: Float {
         get { os_unfair_lock_lock(&levelLock); defer { os_unfair_lock_unlock(&levelLock) }; return _level }
     }
     private func updateLevel(_ mono: [Float]) {
         guard !mono.isEmpty else { return }
         var sum: Float = 0
-        for v in mono { sum += v * v }
+        var peak: Float = 0
+        for v in mono {
+            sum += v * v
+            let a = abs(v)
+            if a > peak { peak = a }
+        }
         let rms = (sum / Float(mono.count)).squareRoot()
         // Map RMS to a perceptual 0...1 with a little headroom, then smooth.
         let scaled = min(1, rms * 6)
         os_unfair_lock_lock(&levelLock)
         _level = _level * 0.7 + scaled * 0.3
+        if peak > _sessionPeak { _sessionPeak = peak }
         os_unfair_lock_unlock(&levelLock)
     }
 
@@ -194,6 +265,7 @@ public final class LiveEngine {
         // Start every session from a clean slate.
         ring.reset()
         denoiser.resetStreaming()
+        os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
 
         // If anything below throws we must tear the half-built graph down —
         // otherwise the next start() would stack a second source node.
@@ -234,14 +306,16 @@ public final class LiveEngine {
             }
 
             // --- Capture tap: mic -> (process queue: denoise) -> ring ---
+            captureConverter = nil  // fresh converter state per session
             input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, processQueue, weak self] buffer, _ in
-                self?.onCapturedAudio?(buffer)
-                let mono = AudioIO.resampleToMono48k(buffer)
-                self?.updateLevel(mono)
+                guard let self else { return }
+                self.onCapturedAudio?(buffer)
+                let mono = self.convertToMono48k(buffer)
+                self.updateLevel(mono)
                 // Hand off to the serial processing queue: keeps inference off
                 // the tap thread (order is preserved; the ring's prefill
                 // cushion absorbs scheduling jitter).
-                processQueue.async {
+                processQueue.async { [weak self] in
                     if self?.bypassDenoise == true {
                         // Pass audio through untouched so the call still hears
                         // you, just without noise removal.
@@ -280,7 +354,37 @@ public final class LiveEngine {
     public func stop() {
         guard isRunning else { return }
         isRunning = false
+        logSessionStats()
         teardown()
+    }
+
+    /// Session diagnostics: NSLog + append to a stats file, because unified
+    /// log access has proven unreliable when debugging in the field. A zero
+    /// input peak on the mic path means the OS delivered silence (microphone
+    /// permission denied).
+    private func logSessionStats() {
+        let s = ring.stats
+        os_unfair_lock_lock(&levelLock)
+        let peak = _sessionPeak
+        os_unfair_lock_unlock(&levelLock)
+        let line = String(format: "%@ [%@] wrote=%d played=%d underruns=%d skips=%d inPeak=%.4f maxWriteGap=%dms slowWrites=%d",
+                          ISO8601DateFormatter().string(from: Date()), label,
+                          s.written, s.read, s.underruns, s.skips, peak,
+                          s.maxWriteGapMs, s.slowWrites)
+        NSLog("ODE live: %@", line)
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory,
+                                           in: .userDomainMask).first!
+            .appendingPathComponent("ODE", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("engine-stats.log")
+        let data = (line + "\n").data(using: .utf8)!
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
     }
 
     /// Tear the graphs down to a state from which `start` can build cleanly.
@@ -308,7 +412,14 @@ public final class LiveEngine {
 
     /// Route an AVAudioEngine's output to a specific CoreAudio device.
     private func setOutputDevice(_ engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
-        guard let unit = engine.outputNode.audioUnit else { return }
+        guard let unit = engine.outputNode.audioUnit else {
+            // Failing silently here would leave the engine on the DEFAULT
+            // output — leaking mic audio to the user's speakers instead of
+            // feeding the virtual device.
+            throw NSError(domain: "ode.live", code: -12,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "Output node has no audio unit (cannot pin output device)"])
+        }
         var dev = deviceID
         let status = AudioUnitSetProperty(unit,
                                           kAudioOutputUnitProperty_CurrentDevice,
@@ -325,7 +436,11 @@ public final class LiveEngine {
     /// always captures from a chosen real microphone rather than whatever the
     /// system default input happens to be (which could be the virtual mic).
     private func setInputDevice(_ engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
-        guard let unit = engine.inputNode.audioUnit else { return }
+        guard let unit = engine.inputNode.audioUnit else {
+            throw NSError(domain: "ode.live", code: -13,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "Input node has no audio unit (cannot pin input device)"])
+        }
         var dev = deviceID
         let status = AudioUnitSetProperty(unit,
                                           kAudioOutputUnitProperty_CurrentDevice,

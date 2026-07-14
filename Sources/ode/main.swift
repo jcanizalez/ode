@@ -222,6 +222,7 @@ case "fakecall":
         var glitches = 0
         var capturedFrames: AVAudioFramePosition = 0
         var lastSample: Float = 0
+        var peak: Float = 0
         capture.inputNode.installTap(onBus: 0, bufferSize: 4_800, format: inFmt) { buf, _ in
             capturedFrames += AVAudioFramePosition(buf.frameLength)
             try? recFile?.write(from: buf)
@@ -229,6 +230,8 @@ case "fakecall":
                 for i in 0..<Int(buf.frameLength) {
                     if abs(ch[i] - lastSample) > 0.5 { glitches += 1 }
                     lastSample = ch[i]
+                    let a = abs(ch[i])
+                    if a > peak { peak = a }
                 }
             }
         }
@@ -255,13 +258,16 @@ case "fakecall":
             playback.stop()
             capture.inputNode.removeTap(onBus: 0)
             capture.stop()
+            recFile = nil  // finalize the WAV header before exiting
             let secs = Double(capturedFrames) / inFmt.sampleRate
             print("✓ Call ended. Captured \(String(format: "%.1f", secs))s from ODE Microphone.")
+            print(String(format: "  peak level: %.4f%@", peak,
+                         peak == 0 ? "  ⚠ SILENT — mic path produced no audio!" : ""))
             print(glitches == 0
                   ? "✓ No audio glitches detected on the mic path."
                   : "⚠ \(glitches) abrupt discontinuities detected (possible pops).")
             if let recordPath { print("Mic-path recording: \(recordPath)") }
-            exit(0)
+            exit(peak == 0 ? 2 : 0)
         }
         dispatchMain()
     } catch {
