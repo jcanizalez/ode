@@ -105,7 +105,8 @@ public enum MeetingAI {
     /// Render the transcript for prompting, keeping it inside the on-device
     /// model's context window: long meetings are truncated to the most recent
     /// part (the part live questions are usually about anyway).
-    private static func transcriptText(_ t: Transcript, maxChars: Int = 12_000) -> String {
+    /// (Internal for unit tests.)
+    static func transcriptText(_ t: Transcript, maxChars: Int = 12_000) -> String {
         let full = t.ordered.map { "\($0.speaker): \($0.text)" }.joined(separator: "\n")
         guard full.count > maxChars else { return full }
         let tail = String(full.suffix(maxChars))

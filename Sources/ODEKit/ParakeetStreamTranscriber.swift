@@ -189,8 +189,8 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
     /// been emitted yet. Reconciles by content, not by character counts: the
     /// manager's confirmed transcript and its `finish()` result are not always
     /// strict extensions of each other, so never re-emit text we've already
-    /// sent and never drop text we haven't.
-    private func emitDelta(upTo text: String) {
+    /// sent and never drop text we haven't. (Internal for unit tests.)
+    func emitDelta(upTo text: String) {
         emitLock.lock()
         let delta: String
         if text.hasPrefix(emittedText) {

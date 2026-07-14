@@ -60,6 +60,11 @@ let package = Package(
             name: "ODEApp",
             dependencies: ["ODEKit"],
             path: "Sources/ODEApp"
+        ),
+        .testTarget(
+            name: "ODEKitTests",
+            dependencies: ["ODEKit"],
+            path: "Tests/ODEKitTests"
         )
     ]
 )

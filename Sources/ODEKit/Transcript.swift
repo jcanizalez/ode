@@ -118,10 +118,15 @@ public final class TranscriptStore {
 
     public let directory: URL
 
-    public init() {
+    public convenience init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory,
                                             in: .userDomainMask).first!
-        directory = base.appendingPathComponent("ODE/Transcripts", isDirectory: true)
+        self.init(directory: base.appendingPathComponent("ODE/Transcripts", isDirectory: true))
+    }
+
+    /// Store rooted at a custom directory (tests use a temp dir).
+    public init(directory: URL) {
+        self.directory = directory
         try? FileManager.default.createDirectory(at: directory,
                                                  withIntermediateDirectories: true)
     }
