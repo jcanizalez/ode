@@ -37,6 +37,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Quitting mid-call used to drop the in-progress meeting transcript:
+        // engines stopped but the save step never ran. Delay termination until
+        // the transcript is flushed and saved (bounded so quit can't hang).
+        guard controller.transcribing else { return .terminateNow }
+        var replied = false
+        let reply = {
+            DispatchQueue.main.async {
+                guard !replied else { return }
+                replied = true
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        controller.stopIfRunning()
+        controller.finishTranscription(completion: reply)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: reply)
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Stop processing and hide the virtual devices so users never see a
         // dead "ODE Microphone"/"ODE Speaker" while the app isn't running.

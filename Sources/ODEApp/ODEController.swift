@@ -455,6 +455,25 @@ final class ODEController: ObservableObject {
         reconcileTranscription()
     }
 
+    /// Finish and persist any in-progress transcription, then call
+    /// `completion` (arbitrary thread). The quit path uses this so an active
+    /// meeting's transcript is saved instead of silently dropped.
+    func finishTranscription(completion: @escaping () -> Void) {
+        guard #available(macOS 26.0, *), transcribing,
+              let mt = meetingTranscriber as? MeetingTranscriber else {
+            completion()
+            return
+        }
+        transcribing = false
+        micEngine.onCapturedAudio = nil
+        speakerEngine.onCapturedAudio = nil
+        meetingTranscriber = nil
+        Task {
+            await mt.finishAndSave()
+            completion()
+        }
+    }
+
     // MARK: - Live meeting access
 
     /// Snapshot of the meeting currently being transcribed (nil when none).
