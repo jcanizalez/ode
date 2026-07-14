@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
+ODE_VERSION="${ODE_VERSION:-0.5.4}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp
@@ -28,8 +29,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>            <string>ODE</string>
     <key>CFBundleDisplayName</key>     <string>ODE</string>
     <key>CFBundleIdentifier</key>      <string>com.ode.app</string>
-    <key>CFBundleVersion</key>         <string>0.5.4</string>
-    <key>CFBundleShortVersionString</key><string>0.5.4</string>
+    <key>CFBundleVersion</key>         <string>__ODE_VERSION__</string>
+    <key>CFBundleShortVersionString</key><string>__ODE_VERSION__</string>
     <key>CFBundleExecutable</key>      <string>ODE</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
@@ -42,6 +43,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+# Stamp the version (overridable: ODE_VERSION=1.2.3 ./scripts/build-app.sh).
+sed -i '' "s/__ODE_VERSION__/$ODE_VERSION/g" "$APP/Contents/Info.plist"
 
 # --- Code signing ---
 # Prefer a real certificate: a stable identity means macOS remembers the

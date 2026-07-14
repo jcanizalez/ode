@@ -180,11 +180,17 @@ final class MeetingAITests: XCTestCase {
 }
 
 final class AudioDevicesTests: XCTestCase {
-    func testEnumeratesAtLeastOneDevice() {
+    /// CI runners may expose no audio hardware; device-presence assertions
+    /// only hold on a real Mac.
+    private var onCI: Bool { ProcessInfo.processInfo.environment["CI"] != nil }
+
+    func testEnumeratesAtLeastOneDevice() throws {
+        try XCTSkipIf(onCI, "no audio hardware on CI runners")
         XCTAssertFalse(AudioDevices.all().isEmpty)
     }
 
-    func testDefaultDevicesResolve() {
+    func testDefaultDevicesResolve() throws {
+        try XCTSkipIf(onCI, "no audio hardware on CI runners")
         // Any Mac running the tests has a default output.
         let out = AudioDevices.defaultOutput()
         XCTAssertNotNil(out)
