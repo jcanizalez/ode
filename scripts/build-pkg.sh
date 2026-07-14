@@ -111,11 +111,17 @@ productbuild \
     --package-path "$(dirname "$COMPONENT")" \
     "$PKG_OUT"
 
-# --- Optional signing (set ODE_INSTALLER_IDENTITY to a Developer ID Installer) ---
-if [ -n "$ODE_INSTALLER_IDENTITY" ]; then
-    echo "Signing installer with '$ODE_INSTALLER_IDENTITY'…"
-    productsign --sign "$ODE_INSTALLER_IDENTITY" "$PKG_OUT" "$PKG_OUT.signed"
+# --- Installer signing (auto-detects a Developer ID Installer certificate) ---
+INSTALLER_ID="${ODE_INSTALLER_IDENTITY:-}"
+if [ -z "$INSTALLER_ID" ] && security find-identity -v 2>/dev/null | grep -q "Developer ID Installer"; then
+    INSTALLER_ID="Developer ID Installer"
+fi
+if [ -n "$INSTALLER_ID" ]; then
+    echo "Signing installer with '$INSTALLER_ID'…"
+    productsign --sign "$INSTALLER_ID" "$PKG_OUT" "$PKG_OUT.signed"
     mv "$PKG_OUT.signed" "$PKG_OUT"
+else
+    echo "(Installer left unsigned — create a 'Developer ID Installer' certificate to sign it.)"
 fi
 
 rm -rf "$ROOT" "$SCRIPTS"

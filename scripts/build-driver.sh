@@ -76,7 +76,18 @@ build_driver() {
 
     rm -rf "$DIST/$out"
     cp -R "$build/BlackHole.driver" "$DIST/$out"
-    codesign --force --deep --sign "${ODE_DRIVER_IDENTITY:--}" "$DIST/$out"
+    # Prefer a real identity (required for a notarizable installer).
+    DRV_ID="${ODE_DRIVER_IDENTITY:-}"
+    if [ -z "$DRV_ID" ]; then
+        if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
+            DRV_ID="Developer ID Application"
+        elif security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development"; then
+            DRV_ID="Apple Development"
+        else
+            DRV_ID="-"
+        fi
+    fi
+    codesign --force --deep --sign "$DRV_ID" "$DIST/$out"
     rm -rf "$build"
     echo "✓ Built $DIST/$out  (visible: \"$vis\", hidden: \"$hid\")"
 }

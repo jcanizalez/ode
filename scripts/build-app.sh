@@ -43,10 +43,26 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo "Ad-hoc code signing…"
-codesign --force --deep --sign - \
-  --options runtime \
-  --entitlements /dev/stdin "$APP" <<'ENT' || codesign --force --deep --sign - "$APP"
+# --- Code signing ---
+# Prefer a real certificate: a stable identity means macOS remembers the
+# microphone permission across rebuilds (ad-hoc builds re-prompt every time).
+#   Developer ID Application  -> distribution-grade (notarizable)
+#   Apple Development         -> fine for local builds
+#   "-" (ad-hoc)              -> fallback
+IDENTITY="${ODE_SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
+        IDENTITY="Developer ID Application"
+    elif security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development"; then
+        IDENTITY="Apple Development"
+    else
+        IDENTITY="-"
+    fi
+fi
+echo "Code signing with identity: $IDENTITY"
+
+ENTITLEMENTS="$(mktemp).plist"
+cat > "$ENTITLEMENTS" <<'ENT'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -56,6 +72,11 @@ codesign --force --deep --sign - \
 </dict>
 </plist>
 ENT
+codesign --force --deep --sign "$IDENTITY" \
+  --options runtime \
+  --entitlements "$ENTITLEMENTS" "$APP" \
+  || codesign --force --deep --sign - "$APP"
+rm -f "$ENTITLEMENTS"
 
 echo
 echo "✓ Built $APP"
