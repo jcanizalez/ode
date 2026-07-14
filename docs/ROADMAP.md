@@ -10,6 +10,11 @@ leaving the Mac.
 
 ## Shipped
 
+- **Meeting intelligence** (v0.8.0) — auto-generated notes when a meeting
+  ends: timestamped chapters, decisions, open questions, action items with
+  owners, mentions-of-you, speaker rename, recap email. Calendar-aware
+  titles (EventKit) with AI fallback in the meeting's language; source-app
+  tagging. The AI knows who "You" is from the account name.
 - Noise cancellation, both directions (DPDFNet 48 kHz full-band):
   "Cancel my noise" (mic path) and "Cancel others' noise" (speaker path)
 - **Echo cancellation** (v0.7.0) — take calls on speakers without the remote
@@ -30,12 +35,10 @@ leaving the Mac.
 
 ## Backlog (rough priority)
 
-1. **Calendar-aware meetings** — title transcripts from the EventKit event
-   ("Sprint Planning", attendees) instead of "11:09 AM Meeting"; fill
-   `Transcript.sourceApp` from the app using the virtual device.
-2. **Speaking analytics** — filler words ("este…", "o sea", "um"), pace (WPM),
-   interruptions; computed from transcripts we already store.
-3. **Live translated captions** — Apple's on-device Translation framework over
+1. **Panel redesign** (v0.9.0) — refined cards + disclosure ("Advanced"
+   rows), status line back in the header, echo-cancellation moved to the
+   mic card's context; scales as settings grow.
+2. **Live translated captions** — Apple's on-device Translation framework over
    the live segment stream (es⇄en first). Real-time interpretation without
    the cloud.
 4. **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`
