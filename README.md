@@ -113,8 +113,13 @@ scripts/
   fetch-deps.sh            Downloads sherpa-onnx libs + DPDFNet model
   install-virtual-mic.sh   Installs a loopback device (BlackHole)
   build-app.sh             Builds & signs dist/ODE.app
+  build-driver.sh          Builds the ODE virtual-audio drivers
+  build-pkg.sh             Builds the dist/ODE-x.y.z.pkg installer
+  run-tests.sh             Unit tests + coverage report
+  e2e-test.sh              Full pipeline test without a real call
 docs/
   VIRTUAL_MIC.md           Virtual-microphone setup & branded build
+  TESTING.md               How to test everything without joining a call
 ```
 
 ## Licensing & attribution
