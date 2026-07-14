@@ -1,48 +1,101 @@
 import AVFoundation
 import CoreAudio
 
-/// Simple thread-safe float ring buffer for passing audio between the
-/// capture callback and the playback render callback.
+/// Thread-safe float ring buffer between the capture/processing side and the
+/// playback render callback, with jitter-buffer behavior:
+///
+///  • `prefill`: reads produce silence until this many samples have buffered,
+///    giving processing a cushion so momentary stalls don't audibly pop. The
+///    cushion re-arms after an underrun instead of stuttering sample-by-sample.
+///  • `maxFill`: a cap on buffered audio — a transient stall can't otherwise
+///    permanently add its backlog to the call latency; the oldest backlog is
+///    dropped in one clean skip instead.
+///
+/// Copies use `memcpy` in at most two segments and the lock is
+/// `os_unfair_lock` (priority donation), so the realtime render thread never
+/// waits behind a long, low-priority critical section.
 final class RingBuffer {
-    private var storage: [Float]
+    private let storage: UnsafeMutablePointer<Float>
+    private let capacity: Int
+    private let prefill: Int
+    private let maxFill: Int
     private var readIdx = 0
     private var writeIdx = 0
     private var filled = 0
-    private let lock = NSLock()
+    private var primed = false
+    private var lock = os_unfair_lock()
 
-    init(capacity: Int) { storage = [Float](repeating: 0, count: capacity) }
+    init(capacity: Int, prefill: Int = 0, maxFill: Int? = nil) {
+        self.capacity = capacity
+        self.prefill = min(prefill, capacity)
+        self.maxFill = min(maxFill ?? capacity, capacity)
+        storage = .allocate(capacity: capacity)
+        storage.initialize(repeating: 0, count: capacity)
+    }
+
+    deinit { storage.deallocate() }
 
     func write(_ samples: [Float]) {
-        lock.lock(); defer { lock.unlock() }
-        for s in samples {
-            storage[writeIdx] = s
-            writeIdx = (writeIdx + 1) % storage.count
-            if filled < storage.count {
-                filled += 1
-            } else {
-                readIdx = (readIdx + 1) % storage.count // overwrite oldest
+        samples.withUnsafeBufferPointer { src in
+            guard let base = src.baseAddress, src.count > 0 else { return }
+            os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+            var n = src.count
+            var from = base
+            if n > capacity {                       // keep only the newest
+                from += n - capacity
+                n = capacity
+            }
+            // Copy in ≤2 wrapped segments.
+            let first = min(n, capacity - writeIdx)
+            memcpy(storage + writeIdx, from, first * MemoryLayout<Float>.size)
+            if n > first {
+                memcpy(storage, from + first, (n - first) * MemoryLayout<Float>.size)
+            }
+            writeIdx = (writeIdx + n) % capacity
+            filled += n
+            if filled > capacity {                  // overwrote oldest
+                readIdx = writeIdx
+                filled = capacity
+            }
+            if filled > maxFill {
+                // Skip the backlog down to the prefill cushion: one clean
+                // discontinuity instead of seconds of added latency.
+                let drop = filled - max(prefill, 1)
+                readIdx = (readIdx + drop) % capacity
+                filled -= drop
             }
         }
     }
 
-    /// Fill `out` with up to `count` samples; pad with silence on underrun.
+    /// Fill `out` with `count` samples; silence until primed / on underrun.
     func read(into out: UnsafeMutablePointer<Float>, count: Int) {
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<count {
-            if filled > 0 {
-                out[i] = storage[readIdx]
-                readIdx = (readIdx + 1) % storage.count
-                filled -= 1
-            } else {
-                out[i] = 0
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        if !primed {
+            if filled >= prefill { primed = true } else {
+                memset(out, 0, count * MemoryLayout<Float>.size)
+                return
             }
+        }
+        let n = min(count, filled)
+        let first = min(n, capacity - readIdx)
+        memcpy(out, storage + readIdx, first * MemoryLayout<Float>.size)
+        if n > first {
+            memcpy(out + first, storage, (n - first) * MemoryLayout<Float>.size)
+        }
+        readIdx = (readIdx + n) % capacity
+        filled -= n
+        if n < count {
+            // Underrun: pad with silence and re-arm the cushion so we rebuffer
+            // instead of stuttering.
+            memset(out + n, 0, (count - n) * MemoryLayout<Float>.size)
+            primed = false
         }
     }
 
     /// Drop all buffered audio (call between sessions to avoid stale playback).
     func reset() {
-        lock.lock(); defer { lock.unlock() }
-        readIdx = 0; writeIdx = 0; filled = 0
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        readIdx = 0; writeIdx = 0; filled = 0; primed = false
     }
 }
 
@@ -53,7 +106,15 @@ public final class LiveEngine {
     private let captureEngine = AVAudioEngine()
     private let playbackEngine = AVAudioEngine()
     private let denoiser = Denoiser()
-    private let ring = RingBuffer(capacity: 48_000 * 4) // 4 s headroom
+    /// 100 ms jitter cushion before playback starts; backlog capped at 500 ms
+    /// so a transient stall can't permanently add latency to the call.
+    private let ring = RingBuffer(capacity: 48_000 * 4,
+                                  prefill: 4_800,
+                                  maxFill: 24_000)
+    /// Denoise inference runs here, not on the capture tap thread — a slow
+    /// inference must never stall the audio engine's delivery pipeline.
+    private let processQueue = DispatchQueue(label: "ode.live.process",
+                                             qos: .userInteractive)
     private var sourceNode: AVAudioSourceNode!
     private var isRunning = false
 
@@ -172,18 +233,23 @@ public final class LiveEngine {
                 try setOutputDevice(playbackEngine, deviceID: dev.id)
             }
 
-            // --- Capture tap: mic -> denoise -> ring ---
-            input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, weak self] buffer, _ in
+            // --- Capture tap: mic -> (process queue: denoise) -> ring ---
+            input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, processQueue, weak self] buffer, _ in
                 self?.onCapturedAudio?(buffer)
                 let mono = AudioIO.resampleToMono48k(buffer)
                 self?.updateLevel(mono)
-                if self?.bypassDenoise == true {
-                    // Pass audio through untouched so the call still hears you,
-                    // just without noise removal.
-                    ring.write(mono)
-                } else {
-                    let clean = denoiser.processStreaming(mono)
-                    if !clean.isEmpty { ring.write(clean) }
+                // Hand off to the serial processing queue: keeps inference off
+                // the tap thread (order is preserved; the ring's prefill
+                // cushion absorbs scheduling jitter).
+                processQueue.async {
+                    if self?.bypassDenoise == true {
+                        // Pass audio through untouched so the call still hears
+                        // you, just without noise removal.
+                        ring.write(mono)
+                    } else {
+                        let clean = denoiser.processStreaming(mono)
+                        if !clean.isEmpty { ring.write(clean) }
+                    }
                 }
             }
 
@@ -224,6 +290,8 @@ public final class LiveEngine {
         configObservers.removeAll()
         captureEngine.inputNode.removeTap(onBus: 0)
         captureEngine.stop()
+        // Drain in-flight inference before touching the denoiser's state.
+        processQueue.sync {}
         _ = denoiser.flushStreaming()
         denoiser.resetStreaming()
         playbackEngine.stop()

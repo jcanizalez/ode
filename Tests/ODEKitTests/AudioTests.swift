@@ -108,6 +108,40 @@ final class RingBufferTests: XCTestCase {
         ring.write([3])
         XCTAssertEqual(read(ring, 2), [2, 3])
     }
+
+    func testWrapAroundPreservesData() {
+        let ring = RingBuffer(capacity: 4)
+        ring.write([1, 2, 3])
+        XCTAssertEqual(read(ring, 3), [1, 2, 3])
+        ring.write([4, 5, 6])          // wraps the internal indices
+        XCTAssertEqual(read(ring, 3), [4, 5, 6])
+    }
+
+    func testPrefillGatesReadsUntilCushionFills() {
+        let ring = RingBuffer(capacity: 16, prefill: 4)
+        ring.write([1, 2])
+        XCTAssertEqual(read(ring, 2), [0, 0])   // not primed yet → silence
+        ring.write([3, 4])
+        XCTAssertEqual(read(ring, 4), [1, 2, 3, 4])  // cushion reached
+    }
+
+    func testUnderrunReArmsThePrefillCushion() {
+        let ring = RingBuffer(capacity: 16, prefill: 3)
+        ring.write([1, 2, 3])
+        XCTAssertEqual(read(ring, 4), [1, 2, 3, 0])  // underrun → re-arm
+        ring.write([4, 5])
+        XCTAssertEqual(read(ring, 2), [0, 0])        // rebuffering
+        ring.write([6])
+        XCTAssertEqual(read(ring, 3), [4, 5, 6])     // primed again
+    }
+
+    func testMaxFillDropsBacklogKeepingNewest() {
+        let ring = RingBuffer(capacity: 16, prefill: 2, maxFill: 6)
+        ring.write([1, 2, 3, 4, 5, 6, 7, 8])   // 8 > maxFill 6 → drop to prefill 2
+        var out = [Float](repeating: -1, count: 2)
+        out.withUnsafeMutableBufferPointer { ring.read(into: $0.baseAddress!, count: 2) }
+        XCTAssertEqual(out, [7, 8])            // only the newest cushion remains
+    }
 }
 
 final class DenoiserTests: XCTestCase {
