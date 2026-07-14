@@ -15,6 +15,14 @@ public final class MeetingTranscriber {
     private var startedAt = Date()
     private var running = false
 
+    // Meeting context, set by the controller around start():
+    /// Calendar event title, when one was found ("Sprint Planning").
+    public var suggestedTitle: String?
+    /// Attendee first names from the calendar event.
+    public var attendees: [String]?
+    /// Conferencing app detected at meeting start ("Zoom", "Microsoft Teams").
+    public var sourceApp: String?
+
     public init(engine: TranscriptionEngine = .apple, detectSpeakers: Bool = false) {
         switch engine {
         case .apple:
@@ -61,12 +69,17 @@ public final class MeetingTranscriber {
         // the meeting start, so use them directly; fall back to wall-clock.
         let start = seg.start > 0 ? seg.start : elapsedBase
         let end = max(seg.end, start)
-        // Sub-label remote speech with the dominant diarized speaker. Only
-        // trust it when the segment has real engine timing (start > 0).
+        // Sub-label remote speech with the dominant diarized speaker. Timed
+        // segments query their exact span; untimed ones (anchored after their
+        // predecessor) query a window around the anchor so end-of-meeting
+        // stragglers still get labeled instead of staying "Others".
         var speaker = speaker
-        if speaker == "Others", seg.start > 0, seg.end > seg.start,
-           let label = diarizer?.speakerLabel(from: seg.start, to: seg.end) {
-            speaker = label
+        if speaker == "Others", let diarizer {
+            let qs = seg.end > seg.start ? seg.start : max(0, start - 10)
+            let qe = seg.end > seg.start ? seg.end : start + 2
+            if let label = diarizer.speakerLabel(from: qs, to: qe) {
+                speaker = label
+            }
         }
         lock.lock()
         segments.append(TranscriptSegment(speaker: speaker, start: start,
@@ -85,9 +98,10 @@ public final class MeetingTranscriber {
         lock.unlock()
         guard isRunning, !segs.isEmpty else { return nil }
         let df = DateFormatter(); df.dateFormat = "h:mm a"
-        return Transcript(title: "\(df.string(from: startedAt)) Meeting",
+        return Transcript(title: suggestedTitle ?? "\(df.string(from: startedAt)) Meeting",
                           startedAt: startedAt, endedAt: Date(),
-                          segments: segs, chat: chat)
+                          segments: segs, sourceApp: sourceApp,
+                          attendees: attendees, chat: chat)
     }
 
     /// Record a Q&A exchange asked during the live meeting, so it's part of
@@ -121,10 +135,17 @@ public final class MeetingTranscriber {
         guard !segs.isEmpty else { return nil }
 
         let ended = Date()
+        // Title priority: explicit → calendar event → AI (from the content)
+        // → time-based.
+        var autoTitle = title ?? suggestedTitle
+        if autoTitle == nil {
+            autoTitle = await MeetingAI.title(forSegments: segs)
+        }
         let df = DateFormatter(); df.dateFormat = "h:mm a"
-        let autoTitle = title ?? "\(df.string(from: startedAt)) Meeting"
-        let transcript = Transcript(title: autoTitle, startedAt: startedAt,
-                                    endedAt: ended, segments: segs, chat: chat)
+        let transcript = Transcript(title: autoTitle ?? "\(df.string(from: startedAt)) Meeting",
+                                    startedAt: startedAt, endedAt: ended,
+                                    segments: segs, sourceApp: sourceApp,
+                                    attendees: attendees, chat: chat)
         TranscriptStore.shared.save(transcript)
         return transcript
     }

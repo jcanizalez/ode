@@ -6,10 +6,15 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# FoundationModels' @Generable macros need Xcode's toolchain (the Command
+# Line Tools lack the macro plugin).
+XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
+[ -n "$XCODE" ] && export DEVELOPER_DIR="$XCODE/Contents/Developer"
+
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
-ODE_VERSION="${ODE_VERSION:-0.7.0}"
+ODE_VERSION="${ODE_VERSION:-0.8.0}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp
@@ -37,6 +42,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSUIElement</key>             <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>ODE needs the microphone to remove background noise in real time.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>ODE reads your calendar to title meeting transcripts with the event name.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>ODE transcribes meetings on-device so you can keep searchable notes.</string>
     <key>NSHighResolutionCapable</key> <true/>
@@ -72,6 +79,7 @@ cat > "$ENTITLEMENTS" <<'ENT'
 <plist version="1.0">
 <dict>
     <key>com.apple.security.device.audio-input</key><true/>
+    <key>com.apple.security.personal-information.calendars</key><true/>
 </dict>
 </plist>
 ENT

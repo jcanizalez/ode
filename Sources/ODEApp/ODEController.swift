@@ -484,7 +484,14 @@ final class ODEController: ObservableObject {
                                         bypass: bypass)
                 } catch {
                     LiveEngine.diagnostic("[mic] START FAILED: \(error.localizedDescription)")
-                    DispatchQueue.main.async { self?.micActive = false }
+                    DispatchQueue.main.async {
+                        self?.micActive = false
+                        // Retry while the call is still using the device — a
+                        // transient HAL failure must not mute a whole meeting.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            self?.reconcileMic()
+                        }
+                    }
                 }
             }
         } else if !inUse && micActive {
@@ -514,7 +521,12 @@ final class ODEController: ObservableObject {
                                             bypass: bypass)
                 } catch {
                     LiveEngine.diagnostic("[speaker] START FAILED: \(error.localizedDescription)")
-                    DispatchQueue.main.async { self?.speakerActive = false }
+                    DispatchQueue.main.async {
+                        self?.speakerActive = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            self?.reconcileSpeaker()
+                        }
+                    }
                 }
             }
         } else if !inUse && speakerActive {
@@ -585,6 +597,19 @@ final class ODEController: ObservableObject {
         meetingTranscriber = mt
         transcribing = true
 
+        // Meeting context: which app is calling, and what the calendar says
+        // is happening right now (titles the transcript "Sprint Planning"
+        // instead of "11:09 AM Meeting").
+        mt.sourceApp = SourceAppDetector.detect()
+        Task { [weak mt] in
+            if await CalendarMeetings.ensureAccess(),
+               let meeting = CalendarMeetings.currentEvent() {
+                mt?.suggestedTitle = meeting.title
+                mt?.attendees = meeting.attendeeFirstNames.isEmpty
+                    ? nil : meeting.attendeeFirstNames
+            }
+        }
+
         // Forward captured audio from each engine to the matching transcriber.
         micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
         speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
@@ -600,6 +625,14 @@ final class ODEController: ObservableObject {
         }
     }
 
+    /// First name for AI attribution/mentions: user override, else the
+    /// macOS account's full name — the on-device "account info".
+    private var userFirstName: String {
+        let name = UserDefaults.standard.string(forKey: "ode.userName")
+            .flatMap { $0.isEmpty ? nil : $0 } ?? NSFullUserName()
+        return name.split(separator: " ").first.map(String.init) ?? name
+    }
+
     @available(macOS 26.0, *)
     private func stopTranscription() {
         transcribing = false
@@ -607,9 +640,26 @@ final class ODEController: ObservableObject {
         speakerEngine.onCapturedAudio = nil
         guard let mt = meetingTranscriber as? MeetingTranscriber else { return }
         meetingTranscriber = nil
+        let name = userFirstName
         Task {
-            await mt.finishAndSave()
+            let saved = await mt.finishAndSave()
             await MainActor.run { self.objectWillChange.send() }
+            // Auto-summarize: the notes are ready when the user opens them,
+            // no button needed. Additive — failure leaves the raw transcript.
+            if var t = saved, MeetingAI.isAvailable, MeetingNotesFormat.hasSubstance(t) {
+                do {
+                    let insights = try await MeetingAI.insights(for: t, userName: name)
+                    t.summary = insights.summary
+                    t.keyPoints = insights.keyPoints
+                    t.actionItems = insights.actionItems
+                    t.decisions = insights.decisions.isEmpty ? nil : insights.decisions
+                    t.openQuestions = insights.openQuestions.isEmpty ? nil : insights.openQuestions
+                    t.chapters = insights.chapters.isEmpty ? nil : insights.chapters
+                    TranscriptStore.shared.save(t)
+                } catch {
+                    NSLog("ODE: auto-summarize failed: \(error.localizedDescription)")
+                }
+            }
         }
     }
 

@@ -3,7 +3,7 @@ import Foundation
 /// A speaker-labeled, timestamped line in a transcript.
 public struct TranscriptSegment: Codable, Identifiable {
     public var id = UUID()
-    public let speaker: String       // e.g. "You", "Others", "Speaker 2"
+    public var speaker: String       // e.g. "You", "Others", "Speaker 2", "Igor"
     public let start: TimeInterval   // seconds from meeting start
     public let end: TimeInterval
     public let text: String
@@ -13,6 +13,34 @@ public struct TranscriptSegment: Codable, Identifiable {
         self.start = start
         self.end = end
         self.text = text
+    }
+}
+
+/// A follow-up task extracted from the meeting, with the responsible speaker
+/// when one was stated ("Igor will send the doc" → owner "Igor").
+public struct ActionItem: Codable, Identifiable, Hashable {
+    public var id = UUID()
+    public var text: String
+    public var owner: String?
+
+    public init(text: String, owner: String? = nil) {
+        self.text = text
+        self.owner = owner
+    }
+}
+
+/// A topic-level chapter of the meeting ("Assessment Review — 03:32"),
+/// with detail bullets. Timestamps let the UI jump into the transcript.
+public struct Chapter: Codable, Identifiable {
+    public var id = UUID()
+    public var title: String
+    public var startSeconds: TimeInterval
+    public var bullets: [String]
+
+    public init(title: String, startSeconds: TimeInterval, bullets: [String]) {
+        self.title = title
+        self.startSeconds = startSeconds
+        self.bullets = bullets
     }
 }
 
@@ -36,17 +64,24 @@ public struct Transcript: Codable, Identifiable {
     public var segments: [TranscriptSegment]
 
     // Optional metadata / cached AI output.
-    public var sourceApp: String?          // e.g. "Microsoft Teams", "zoom.us"
+    public var sourceApp: String?          // e.g. "Microsoft Teams", "Zoom"
+    public var attendees: [String]?        // first names from the calendar event
     public var starred: Bool = false
     public var summary: String?
     public var keyPoints: [String]?
-    public var actionItems: [String]?
+    public var actionItems: [ActionItem]?
+    public var decisions: [String]?
+    public var openQuestions: [String]?
+    public var chapters: [Chapter]?
     public var chat: [ChatMessage] = []    // saved Ask-anything Q&A history
 
     public init(id: UUID = UUID(), title: String, startedAt: Date, endedAt: Date,
                 segments: [TranscriptSegment], sourceApp: String? = nil,
+                attendees: [String]? = nil,
                 starred: Bool = false, summary: String? = nil,
-                keyPoints: [String]? = nil, actionItems: [String]? = nil,
+                keyPoints: [String]? = nil, actionItems: [ActionItem]? = nil,
+                decisions: [String]? = nil, openQuestions: [String]? = nil,
+                chapters: [Chapter]? = nil,
                 chat: [ChatMessage] = []) {
         self.id = id
         self.title = title
@@ -54,11 +89,51 @@ public struct Transcript: Codable, Identifiable {
         self.endedAt = endedAt
         self.segments = segments
         self.sourceApp = sourceApp
+        self.attendees = attendees
         self.starred = starred
         self.summary = summary
         self.keyPoints = keyPoints
         self.actionItems = actionItems
+        self.decisions = decisions
+        self.openQuestions = openQuestions
+        self.chapters = chapters
         self.chat = chat
+    }
+
+    // MARK: - Codable migration
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, startedAt, endedAt, segments, sourceApp, attendees,
+             starred, summary, keyPoints, actionItems, decisions,
+             openQuestions, chapters, chat
+    }
+
+    /// Custom decode so transcripts saved by older versions still load:
+    /// `actionItems` used to be `[String]` (no owners), and the v0.8 fields
+    /// don't exist in old files.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decode(String.self, forKey: .title)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        endedAt = try c.decode(Date.self, forKey: .endedAt)
+        segments = try c.decode([TranscriptSegment].self, forKey: .segments)
+        sourceApp = try c.decodeIfPresent(String.self, forKey: .sourceApp)
+        attendees = try c.decodeIfPresent([String].self, forKey: .attendees)
+        starred = try c.decodeIfPresent(Bool.self, forKey: .starred) ?? false
+        summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        keyPoints = try c.decodeIfPresent([String].self, forKey: .keyPoints)
+        decisions = try c.decodeIfPresent([String].self, forKey: .decisions)
+        openQuestions = try c.decodeIfPresent([String].self, forKey: .openQuestions)
+        chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters)
+        chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
+        if let items = try? c.decodeIfPresent([ActionItem].self, forKey: .actionItems) {
+            actionItems = items
+        } else if let legacy = try? c.decodeIfPresent([String].self, forKey: .actionItems) {
+            actionItems = legacy.map { ActionItem(text: $0) }
+        } else {
+            actionItems = nil
+        }
     }
 
     public var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
@@ -89,6 +164,41 @@ public struct Transcript: Codable, Identifiable {
 
     public var hasAI: Bool { summary != nil }
 
+    /// Rename a diarized speaker ("Speaker 1" → "Igor") everywhere it appears:
+    /// segments and action-item owners. Renaming *to* an existing label merges
+    /// the speakers (useful when diarization split one person in two).
+    /// "You" is protected — it anchors talk-time and styling semantics.
+    /// Cached AI prose (summary/chapters) is not rewritten; re-summarize for
+    /// that. Returns false when the rename is not allowed.
+    @discardableResult
+    public mutating func renameSpeaker(_ old: String, to new: String) -> Bool {
+        let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, old != "You", trimmed != old else { return false }
+        for i in segments.indices where segments[i].speaker == old {
+            segments[i].speaker = trimmed
+        }
+        if actionItems != nil {
+            for i in actionItems!.indices where actionItems![i].owner == old {
+                actionItems![i].owner = trimmed
+            }
+        }
+        return true
+    }
+
+    /// Segments (by other speakers) that mention `name` as a whole word,
+    /// case- and diacritic-insensitively — "where was I mentioned?".
+    public func mentions(of name: String) -> [TranscriptSegment] {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: trimmed))\\b"
+        return ordered.filter { seg in
+            seg.speaker != "You" &&
+            seg.text.range(of: pattern,
+                           options: [.regularExpression, .caseInsensitive,
+                                     .diacriticInsensitive]) != nil
+        }
+    }
+
     /// A readable plain-text rendering.
     public func plainText() -> String {
         let df = DateFormatter()
@@ -100,8 +210,26 @@ public struct Transcript: Codable, Identifiable {
         if let kp = keyPoints, !kp.isEmpty {
             out += "KEY POINTS\n" + kp.map { "• \($0)" }.joined(separator: "\n") + "\n\n"
         }
+        if let ch = chapters, !ch.isEmpty {
+            out += "CHAPTERS\n" + ch.map { c in
+                let mm = Int(c.startSeconds) / 60, ss = Int(c.startSeconds) % 60
+                var line = String(format: "[%02d:%02d] %@", mm, ss, c.title)
+                if !c.bullets.isEmpty {
+                    line += "\n" + c.bullets.map { "    • \($0)" }.joined(separator: "\n")
+                }
+                return line
+            }.joined(separator: "\n") + "\n\n"
+        }
+        if let d = decisions, !d.isEmpty {
+            out += "DECISIONS\n" + d.map { "• \($0)" }.joined(separator: "\n") + "\n\n"
+        }
+        if let q = openQuestions, !q.isEmpty {
+            out += "OPEN QUESTIONS\n" + q.map { "• \($0)" }.joined(separator: "\n") + "\n\n"
+        }
         if let ai = actionItems, !ai.isEmpty {
-            out += "ACTION ITEMS\n" + ai.map { "• \($0)" }.joined(separator: "\n") + "\n\n"
+            out += "ACTION ITEMS\n" + ai.map { item in
+                "• \(item.text)\(item.owner.map { " — \($0)" } ?? "")"
+            }.joined(separator: "\n") + "\n\n"
         }
         out += "TRANSCRIPT\n"
         for s in ordered {
@@ -110,6 +238,12 @@ public struct Transcript: Codable, Identifiable {
         }
         return out
     }
+}
+
+public extension Notification.Name {
+    /// Posted after a transcript is saved (new meeting, auto-summary,
+    /// rename, star…). UI observers reload their lists.
+    static let odeTranscriptsChanged = Notification.Name("odeTranscriptsChanged")
 }
 
 /// Stores transcripts as JSON (+ a readable .txt) under Application Support.
@@ -140,6 +274,7 @@ public final class TranscriptStore {
             try encoder.encode(transcript).write(to: base.appendingPathExtension("json"))
             try transcript.plainText().data(using: .utf8)?
                 .write(to: base.appendingPathExtension("txt"))
+            NotificationCenter.default.post(name: .odeTranscriptsChanged, object: nil)
         } catch {
             NSLog("ODE: failed to save transcript: \(error.localizedDescription)")
         }

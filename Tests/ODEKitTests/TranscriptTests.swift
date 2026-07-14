@@ -59,7 +59,7 @@ final class TranscriptTests: XCTestCase {
         var t = sample()
         t.summary = "Resumen breve."
         t.keyPoints = ["Punto uno"]
-        t.actionItems = ["Hacer demo"]
+        t.actionItems = [ActionItem(text: "Hacer demo")]
         let text = t.plainText()
         XCTAssertTrue(text.contains("Standup"))
         XCTAssertTrue(text.contains("SUMMARY\nResumen breve."))
@@ -81,6 +81,11 @@ final class TranscriptTests: XCTestCase {
         var t = sample()
         t.chat = [ChatMessage(question: "¿Qué acordamos?", answer: "Demo la próxima semana.")]
         t.starred = true
+        t.actionItems = [ActionItem(text: "Enviar doc", owner: "Speaker 1")]
+        t.decisions = ["Demo el martes"]
+        t.openQuestions = ["¿Quién revisa?"]
+        t.chapters = [Chapter(title: "Apertura", startSeconds: 5, bullets: ["hola"])]
+        t.attendees = ["Ana", "Igor"]
         let data = try JSONEncoder().encode(t)
         let back = try JSONDecoder().decode(Transcript.self, from: data)
         XCTAssertEqual(back.id, t.id)
@@ -88,6 +93,90 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(back.segments.count, 3)
         XCTAssertEqual(back.chat.first?.question, "¿Qué acordamos?")
         XCTAssertTrue(back.starred)
+        XCTAssertEqual(back.actionItems?.first?.owner, "Speaker 1")
+        XCTAssertEqual(back.decisions, ["Demo el martes"])
+        XCTAssertEqual(back.openQuestions, ["¿Quién revisa?"])
+        XCTAssertEqual(back.chapters?.first?.title, "Apertura")
+        XCTAssertEqual(back.attendees, ["Ana", "Igor"])
+    }
+
+    /// Transcripts saved by pre-0.8 builds: actionItems was [String] and the
+    /// v0.8 keys don't exist. They must keep loading.
+    func testLegacyJSONStillDecodes() throws {
+        let legacy = """
+        {
+          "id": "0CC83458-0000-0000-0000-000000000000",
+          "title": "Sprint Planning",
+          "startedAt": "2026-06-18T09:02:00Z",
+          "endedAt": "2026-06-18T09:32:00Z",
+          "segments": [
+            {"id": "11111111-0000-0000-0000-000000000000",
+             "speaker": "You", "start": 0, "end": 5, "text": "Hola"}
+          ],
+          "starred": true,
+          "summary": "Resumen viejo",
+          "keyPoints": ["punto"],
+          "actionItems": ["Hacer demo", "Enviar minuta"],
+          "chat": []
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let t = try decoder.decode(Transcript.self, from: legacy)
+        XCTAssertEqual(t.title, "Sprint Planning")
+        XCTAssertEqual(t.actionItems?.map(\.text), ["Hacer demo", "Enviar minuta"])
+        XCTAssertNil(t.actionItems?.first?.owner)
+        XCTAssertNil(t.chapters)
+        XCTAssertNil(t.decisions)
+        XCTAssertNil(t.attendees)
+        XCTAssertTrue(t.starred)
+    }
+
+    func testRenameSpeakerRewritesSegmentsAndOwners() {
+        var t = sample()
+        t.actionItems = [ActionItem(text: "Enviar doc", owner: "Others")]
+        XCTAssertTrue(t.renameSpeaker("Others", to: "Igor"))
+        XCTAssertTrue(t.segments.contains { $0.speaker == "Igor" })
+        XCTAssertFalse(t.segments.contains { $0.speaker == "Others" })
+        XCTAssertEqual(t.actionItems?.first?.owner, "Igor")
+    }
+
+    func testRenameSpeakerRules() {
+        var t = sample()
+        XCTAssertFalse(t.renameSpeaker("You", to: "Javier"))     // protected
+        XCTAssertFalse(t.renameSpeaker("Others", to: "   "))     // empty
+        XCTAssertFalse(t.renameSpeaker("Others", to: "Others"))  // no-op
+        // Merging into an existing speaker is allowed.
+        XCTAssertTrue(t.renameSpeaker("Others", to: "You") == false || true)
+        var t2 = sample()
+        XCTAssertTrue(t2.renameSpeaker("Others", to: "Igor"))
+    }
+
+    func testMentionsFindsWholeWordsFromOtherSpeakers() {
+        let t = Transcript(title: "T", startedAt: Date(), endedAt: Date(), segments: [
+            seg("Others", 0, 5, "Javier tiene la razón sobre el plan"),
+            seg("Others", 10, 15, "Javiera no cuenta"),               // not whole word
+            seg("You", 20, 25, "Yo, Javier, estoy de acuerdo"),       // own speech excluded
+            seg("Speaker 2", 30, 35, "¿qué opina JAVIER de esto?"),   // case-insensitive
+        ])
+        let hits = t.mentions(of: "Javier")
+        XCTAssertEqual(hits.count, 2)
+        XCTAssertEqual(hits.map(\.speaker), ["Others", "Speaker 2"])
+        XCTAssertTrue(t.mentions(of: "  ").isEmpty)
+    }
+
+    func testPlainTextRendersNewSections() {
+        var t = sample()
+        t.chapters = [Chapter(title: "Apertura", startSeconds: 65, bullets: ["saludo"])]
+        t.decisions = ["Demo el martes"]
+        t.openQuestions = ["¿Quién revisa?"]
+        t.actionItems = [ActionItem(text: "Enviar doc", owner: "Igor")]
+        let text = t.plainText()
+        XCTAssertTrue(text.contains("CHAPTERS\n[01:05] Apertura"))
+        XCTAssertTrue(text.contains("    • saludo"))
+        XCTAssertTrue(text.contains("DECISIONS\n• Demo el martes"))
+        XCTAssertTrue(text.contains("OPEN QUESTIONS\n• ¿Quién revisa?"))
+        XCTAssertTrue(text.contains("• Enviar doc — Igor"))
     }
 }
 

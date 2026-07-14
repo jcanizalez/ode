@@ -19,8 +19,10 @@ AUDIO="${1:-/tmp/ode_e2e_meeting.wav}"
 MIC_OUT="/tmp/ode_e2e_mic.wav"
 STORE="$HOME/Library/Application Support/ODE/Transcripts"
 
-# --- 0. Build the CLI ---
+# --- 0. Build the CLI (Xcode toolchain: FoundationModels macros) ---
 echo "Building ode CLI…"
+XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
+[ -n "$XCODE" ] && export DEVELOPER_DIR="$XCODE/Contents/Developer"
 swift build --product ode >/dev/null 2>&1
 ODE_BIN=".build/debug/ode"
 
@@ -98,6 +100,30 @@ print(f"  title: {t['title']}  ({len(segs)} segments)")
 for s in segs:
     print(f"  [{int(s['start'])//60:02d}:{int(s['start'])%60:02d}] {s['speaker']}: {s['text'][:90]}")
 PY
+
+    # --- 6. Auto-summarize: notes should appear WITHOUT clicking anything ---
+    echo "Waiting for auto-summary…"
+    SUMMARIZED=""
+    for i in $(seq 1 30); do
+        if python3 -c "
+import json, sys
+t = json.load(open('$NEWEST'))
+sys.exit(0 if t.get('summary') else 1)
+" 2>/dev/null; then SUMMARIZED=1; break; fi
+        sleep 3
+    done
+    if [ -n "$SUMMARIZED" ]; then
+        python3 -c "
+import json
+t = json.load(open('$NEWEST'))
+print('✓ Auto-summary generated:')
+print('  summary:', (t.get('summary') or '')[:100])
+print('  chapters:', len(t.get('chapters') or []), '| decisions:', len(t.get('decisions') or []),
+      '| actions:', len(t.get('actionItems') or []))
+"
+    else
+        echo "⚠ No auto-summary after 90s (Apple Intelligence off, or content too small)"
+    fi
     echo
     echo "✓ E2E PASSED"
 else

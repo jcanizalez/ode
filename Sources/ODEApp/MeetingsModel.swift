@@ -20,6 +20,18 @@ final class MeetingsModel: ObservableObject {
     @Published var answer: String?
     @Published var aiError: String?
 
+    /// Segment to scroll to (and briefly highlight) in the transcript tab.
+    @Published var scrollTarget: TranscriptSegment.ID?
+    @Published var draftingRecap = false
+    @Published var recapCopied = false
+
+    /// Name used for "Mentions of you" (first name). Override via defaults.
+    var userFirstName: String {
+        let name = UserDefaults.standard.string(forKey: "ode.userName")
+            .flatMap { $0.isEmpty ? nil : $0 } ?? NSFullUserName()
+        return name.split(separator: " ").first.map(String.init) ?? name
+    }
+
     // Live meeting (in progress right now): pinned in the sidebar; questions
     // can be asked about it in real time — e.g. after stepping away.
     @Published var live: Transcript?
@@ -28,6 +40,8 @@ final class MeetingsModel: ObservableObject {
     private weak var controller: ODEController?
     private var liveTimer: Timer?
 
+    private var storeObserver: NSObjectProtocol?
+
     init(controller: ODEController? = nil) {
         self.controller = controller
         // Poll the in-progress transcript; segments arrive every few seconds
@@ -35,10 +49,20 @@ final class MeetingsModel: ObservableObject {
         liveTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshLive() }
         }
+        // Reload when transcripts change on disk (meeting saved,
+        // auto-summary finished) so notes appear without reopening.
+        storeObserver = NotificationCenter.default.addObserver(
+            forName: .odeTranscriptsChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.reload() }
+        }
         refreshLive()
     }
 
-    deinit { liveTimer?.invalidate() }
+    deinit {
+        liveTimer?.invalidate()
+        if let o = storeObserver { NotificationCenter.default.removeObserver(o) }
+    }
 
     func refreshLive() {
         let snapshot = controller?.liveMeeting
@@ -63,7 +87,7 @@ final class MeetingsModel: ObservableObject {
         answer = nil
         Task {
             do {
-                let a = try await MeetingAI.answer(q, about: t)
+                let a = try await MeetingAI.answer(q, about: t, userName: self.userFirstName)
                 self.answer = a
                 self.question = ""
                 self.controller?.recordLiveChat(question: q, answer: a)
@@ -149,11 +173,14 @@ final class MeetingsModel: ObservableObject {
         summarizing = true
         Task {
             do {
-                let insights = try await MeetingAI.insights(for: t)
+                let insights = try await MeetingAI.insights(for: t, userName: self.userFirstName)
                 var copy = t
                 copy.summary = insights.summary
                 copy.keyPoints = insights.keyPoints
                 copy.actionItems = insights.actionItems
+                copy.decisions = insights.decisions.isEmpty ? nil : insights.decisions
+                copy.openQuestions = insights.openQuestions.isEmpty ? nil : insights.openQuestions
+                copy.chapters = insights.chapters.isEmpty ? nil : insights.chapters
                 TranscriptStore.shared.save(copy)
                 self.replace(copy)
             } catch {
@@ -171,7 +198,7 @@ final class MeetingsModel: ObservableObject {
         answer = nil
         Task {
             do {
-                let a = try await MeetingAI.answer(q, about: t)
+                let a = try await MeetingAI.answer(q, about: t, userName: self.userFirstName)
                 self.answer = a
                 self.question = ""
                 // Persist the Q&A so it survives restarts.
@@ -191,6 +218,44 @@ final class MeetingsModel: ObservableObject {
     func deleteSelected() {
         guard let t = selected else { return }
         delete(t)
+    }
+
+    /// Rename a diarized speaker across the transcript ("Speaker 1" → "Igor").
+    func renameSpeaker(in t: Transcript, from old: String, to new: String) {
+        guard var copy = transcripts.first(where: { $0.id == t.id }) else { return }
+        guard copy.renameSpeaker(old, to: new) else { return }
+        TranscriptStore.shared.save(copy)
+        replace(copy)
+    }
+
+    /// Jump the transcript tab to the segment nearest `seconds`.
+    func jump(to seconds: TimeInterval, in t: Transcript) {
+        let target = t.ordered.last(where: { $0.start <= seconds + 0.5 })
+            ?? t.ordered.first
+        guard let target else { return }
+        tab = .transcript
+        scrollTarget = target.id
+    }
+
+    /// Draft a recap email on-device and copy it to the clipboard.
+    func draftRecapEmail(_ t: Transcript) {
+        guard #available(macOS 26.0, *) else { aiError = aiUnavailableReason; return }
+        draftingRecap = true
+        recapCopied = false
+        Task {
+            do {
+                let email = try await MeetingAI.recapEmail(for: t, from: self.userFirstName)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(email, forType: .string)
+                self.recapCopied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    self?.recapCopied = false
+                }
+            } catch {
+                self.aiError = error.localizedDescription
+            }
+            self.draftingRecap = false
+        }
     }
 
     private func replace(_ t: Transcript) {

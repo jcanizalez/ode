@@ -136,8 +136,12 @@ final class RingBuffer {
 /// device (e.g. the virtual "ODE Microphone"). This is the streaming core that
 /// the virtual "ODE Microphone" device.
 public final class LiveEngine {
-    private let captureEngine = AVAudioEngine()
-    private let playbackEngine = AVAudioEngine()
+    /// Engines are created FRESH for every session: reusing an AVAudioEngine
+    /// across start/stop cycles is unreliable with voice processing enabled —
+    /// second sessions failed with invalid input formats or AU initialization
+    /// errors (-10875) in the field.
+    private var captureEngine: AVAudioEngine?
+    private var playbackEngine: AVAudioEngine?
     private let denoiser = Denoiser()
     /// 200 ms jitter cushion before playback starts: capture taps and the
     /// streaming denoiser both deliver in ~100 ms bursts, so a 100 ms cushion
@@ -192,23 +196,23 @@ public final class LiveEngine {
     }
 
     /// Whether Apple's voice processing (acoustic echo cancellation against
-    /// the system output) is active on the capture side. Fixed at creation:
-    /// toggling it on a live engine fires configuration/device-change storms
-    /// that fight the auto-recovery logic — swap the engine instance instead.
+    /// the system output) is applied to the capture side of each session.
     public let voiceProcessing: Bool
+
+    /// Dormant engine that forces coreaudiod to stand up the voice-processing
+    /// machinery at CREATION time. The first VPIO activation reconfigures the
+    /// system's default-device stack — a storm that, when it happened at
+    /// session start, killed other apps' audio engines mid-call. Pre-warming
+    /// moves that storm to app launch, when nobody is on a call.
+    private var vpWarmup: AVAudioEngine?
 
     public init(voiceProcessing: Bool = false) {
         self.voiceProcessing = voiceProcessing
         if voiceProcessing {
-            // Configure before anything observes the engine — the change
-            // notifications this fires are harmless at construction time.
-            try? captureEngine.inputNode.setVoiceProcessingEnabled(true)
-            if #available(macOS 14.0, *) {
-                // AEC only — don't duck the rest of the system's audio (the
-                // speaker path plays the actual call through these speakers).
-                captureEngine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
-                    .init(enableAdvancedDucking: false, duckingLevel: .min)
-            }
+            let warmup = AVAudioEngine()
+            try? warmup.inputNode.setVoiceProcessingEnabled(true)
+            warmup.prepare()
+            vpWarmup = warmup
         }
     }
 
@@ -233,11 +237,21 @@ public final class LiveEngine {
     /// loop. Changes within this window of a start are ignored.
     private var startedAtTime: CFAbsoluteTime = 0
 
+    /// Set at the top of start(); health checks give a grace period while a
+    /// start executes on the engine queue — otherwise the device-change storm
+    /// that voice-processing setup fires makes the owner's zombie detection
+    /// kill the engine WHILE it is starting.
+    private var startInitiatedAt: CFAbsoluteTime = 0
+
     /// True while the loop is meant to run AND both engines are still alive.
     /// After a configuration change kills an engine, this turns false even
     /// though `start` succeeded earlier — callers use it to detect zombies.
+    /// While a start is still in flight it reports healthy (grace period).
     public var isHealthy: Bool {
-        isRunning && captureEngine.isRunning && playbackEngine.isRunning
+        if isRunning {
+            return captureEngine?.isRunning == true && playbackEngine?.isRunning == true
+        }
+        return CFAbsoluteTimeGetCurrent() - startInitiatedAt < 3.0
     }
 
     /// Smoothed input level in 0...1, updated from the capture tap. Read this
@@ -277,10 +291,12 @@ public final class LiveEngine {
         // Ensure any previous session is fully torn down first, so a second
         // call starts from a clean graph (no duplicate nodes / stale audio).
         if isRunning { stop() }
+        startInitiatedAt = CFAbsoluteTimeGetCurrent()
 
         bypassDenoise = bypass
         // Refuse to capture and play through the same device (feedback loop).
         if let inDev = inputDevice, let outDev = outputDevice, inDev.id == outDev.id {
+            startInitiatedAt = 0  // failed starts get no health grace
             throw NSError(domain: "ode.live", code: -10,
                           userInfo: [NSLocalizedDescriptionKey:
                             "Input and output devices must differ (would cause a feedback loop)."])
@@ -291,25 +307,40 @@ public final class LiveEngine {
         denoiser.resetStreaming()
         os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
 
+        // Fresh engines for every session — see the property comment.
+        let capture = AVAudioEngine()
+        let playback = AVAudioEngine()
+        captureEngine = capture
+        playbackEngine = playback
+
         // If anything below throws we must tear the half-built graph down —
         // otherwise the next start() would stack a second source node.
         do {
-            // --- Capture side first: route + validate the input format before
-            // touching the playback graph. If the selected device just
-            // disappeared, inputFormat comes back invalid (0 Hz / 0 ch) and
-            // installTap would raise an uncatchable NSException — throw a
-            // proper error instead of crashing the app.
-            let input = captureEngine.inputNode
-            if let inDev = inputDevice, !voiceProcessing {
+            // --- Capture side first: voice processing must be configured
+            // before pinning devices or reading formats (it swaps the node's
+            // underlying audio unit).
+            let input = capture.inputNode
+            if voiceProcessing {
+                try input.setVoiceProcessingEnabled(true)
+                if #available(macOS 14.0, *) {
+                    // AEC only — don't duck the rest of the system's audio (the
+                    // speaker path plays the actual call through these speakers).
+                    input.voiceProcessingOtherAudioDuckingConfiguration =
+                        .init(enableAdvancedDucking: false, duckingLevel: .min)
+                }
+            } else if let inDev = inputDevice {
                 // VPIO manages its own full-duplex device pair; pinning a
                 // device into it breaks the unit. With echo cancellation on,
                 // capture follows the system default input instead.
-                try setInputDevice(captureEngine, deviceID: inDev.id)
+                try setInputDevice(capture, deviceID: inDev.id)
             }
+            // Validate the format: if the device just disappeared it comes
+            // back invalid (0 Hz), and installTap would raise an uncatchable
+            // NSException — throw a proper error instead of crashing.
             var inFormat = input.inputFormat(forBus: 0)
             if voiceProcessing, inFormat.sampleRate <= 0 {
                 // VPIO defines its format lazily — prepare() materializes it.
-                captureEngine.prepare()
+                capture.prepare()
                 inFormat = input.inputFormat(forBus: 0)
             }
             guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
@@ -330,11 +361,11 @@ public final class LiveEngine {
                 return noErr
             }
             sourceNode = node
-            playbackEngine.attach(node)
-            playbackEngine.connect(node, to: playbackEngine.mainMixerNode, format: fmt)
+            playback.attach(node)
+            playback.connect(node, to: playback.mainMixerNode, format: fmt)
 
             if let dev = outputDevice {
-                try setOutputDevice(playbackEngine, deviceID: dev.id)
+                try setOutputDevice(playback, deviceID: dev.id)
             }
 
             // --- Capture tap: mic -> (process queue: denoise) -> ring ---
@@ -359,11 +390,12 @@ public final class LiveEngine {
                 }
             }
 
-            captureEngine.prepare()
-            playbackEngine.prepare()
-            try playbackEngine.start()
-            try captureEngine.start()
+            capture.prepare()
+            playback.prepare()
+            try playback.start()
+            try capture.start()
         } catch {
+            startInitiatedAt = 0  // failed starts get no health grace
             teardown()
             throw error
         }
@@ -372,7 +404,7 @@ public final class LiveEngine {
         // unplugged, sample-rate change). Surface that so the owner can restart
         // the loop instead of silently going dead mid-call.
         let nc = NotificationCenter.default
-        for engine in [captureEngine, playbackEngine] {
+        for engine in [capture, playback] {
             configObservers.append(nc.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
             ) { [weak self] _ in
@@ -429,25 +461,22 @@ public final class LiveEngine {
         }
     }
 
-    /// Tear the graphs down to a state from which `start` can build cleanly.
+    /// Tear the session down completely. The engines are DISCARDED, not
+    /// reused — reuse across sessions proved unreliable with voice processing.
     /// Safe to call on a half-built graph (start-failure path).
     private func teardown() {
         configObservers.forEach { NotificationCenter.default.removeObserver($0) }
         configObservers.removeAll()
-        captureEngine.inputNode.removeTap(onBus: 0)
-        captureEngine.stop()
+        captureEngine?.inputNode.removeTap(onBus: 0)
+        captureEngine?.stop()
         // Drain in-flight inference before touching the denoiser's state.
         processQueue.sync {}
         _ = denoiser.flushStreaming()
         denoiser.resetStreaming()
-        playbackEngine.stop()
-        // Fully remove the playback source node so the next start builds a fresh
-        // graph instead of stacking a second node on the mixer.
-        if let node = sourceNode {
-            playbackEngine.disconnectNodeOutput(node)
-            playbackEngine.detach(node)
-            sourceNode = nil
-        }
+        playbackEngine?.stop()
+        sourceNode = nil
+        captureEngine = nil
+        playbackEngine = nil
         ring.reset()
         os_unfair_lock_lock(&levelLock); _level = 0; os_unfair_lock_unlock(&levelLock)
     }

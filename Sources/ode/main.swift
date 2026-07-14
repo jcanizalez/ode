@@ -275,6 +275,53 @@ case "fakecall":
         exit(1)
     }
 
+case "summarize":
+    // Debug: run the on-device meeting AI over a saved transcript JSON and
+    // print the insights — verifies long meetings fit the model's context.
+    guard args.count >= 3 else { print("usage: ode summarize <transcript.json>"); exit(1) }
+    guard #available(macOS 26.0, *) else { print("Requires macOS 26+."); exit(1) }
+    do {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let t = try decoder.decode(Transcript.self,
+                                   from: Data(contentsOf: URL(fileURLWithPath: args[2])))
+        print("Meeting: \(t.title)  (\(t.segments.count) segments, \(Int(t.duration/60)) min)")
+        let sema = DispatchSemaphore(value: 0)
+        Task {
+            do {
+                let i = try await MeetingAI.insights(for: t)
+                print("\nSUMMARY\n\(i.summary)")
+                if !i.chapters.isEmpty {
+                    print("\nCHAPTERS")
+                    for c in i.chapters {
+                        let mm = Int(c.startSeconds) / 60, ss = Int(c.startSeconds) % 60
+                        print(String(format: "  [%02d:%02d] %@", mm, ss, c.title))
+                        for b in c.bullets { print("      • \(b)") }
+                    }
+                }
+                if !i.decisions.isEmpty {
+                    print("\nDECISIONS"); i.decisions.forEach { print("  • \($0)") }
+                }
+                if !i.openQuestions.isEmpty {
+                    print("\nOPEN QUESTIONS"); i.openQuestions.forEach { print("  • \($0)") }
+                }
+                if !i.actionItems.isEmpty {
+                    print("\nACTION ITEMS")
+                    i.actionItems.forEach {
+                        print("  • \($0.text)\($0.owner.map { " — \($0)" } ?? "")")
+                    }
+                }
+            } catch {
+                print("Error: \(error.localizedDescription)")
+            }
+            sema.signal()
+        }
+        sema.wait()
+    } catch {
+        print("Could not load transcript: \(error.localizedDescription)")
+        exit(1)
+    }
+
 case "transcribe":
     // Debug: transcribe an audio file and print timestamped segments.
     // --engine picks the speech-to-text engine (default: apple).

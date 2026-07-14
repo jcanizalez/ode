@@ -40,6 +40,9 @@ struct SpeakerAvatar: View {
 struct MeetingsView: View {
     @StateObject private var model: MeetingsModel
     @State private var confirmDelete = false
+    @State private var renameTarget: String?
+    @State private var renameText = ""
+    @State private var userName = UserDefaults.standard.string(forKey: "ode.userName") ?? ""
 
     init(controller: ODEController? = nil) {
         _model = StateObject(wrappedValue: MeetingsModel(controller: controller))
@@ -53,6 +56,20 @@ struct MeetingsView: View {
         .frame(minWidth: 820, minHeight: 540)
         .background(Color(white: 0.07))
         .onAppear { model.reload() }
+        .alert("Rename \"\(renameTarget ?? "")\"",
+               isPresented: Binding(get: { renameTarget != nil },
+                                    set: { if !$0 { renameTarget = nil } })) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                if let old = renameTarget, let t = model.selected {
+                    model.renameSpeaker(in: t, from: old, to: renameText)
+                }
+                renameTarget = nil
+            }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+        } message: {
+            Text("The new name appears in the transcript, talk time and action items.")
+        }
     }
 
     // MARK: - Sidebar
@@ -98,6 +115,20 @@ struct MeetingsView: View {
                 }
                 .padding(.bottom, 12)
             }
+
+            // "Mentions of you" needs your name; defaults to your macOS
+            // account name, override here.
+            HStack(spacing: 7) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.4))
+                TextField("Your name (\(NSFullUserName()))", text: $userName)
+                    .textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(.white)
+                    .onSubmit {
+                        UserDefaults.standard.set(userName, forKey: "ode.userName")
+                    }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(Color.white.opacity(0.04))
         }
         .background(Color(white: 0.09))
     }
@@ -323,6 +354,15 @@ struct MeetingsView: View {
             Button { model.copy(t) } label: {
                 Image(systemName: "doc.on.doc").foregroundStyle(.white.opacity(0.6))
             }.buttonStyle(.plain).help("Copy transcript")
+            Button { model.draftRecapEmail(t) } label: {
+                if model.draftingRecap {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: model.recapCopied ? "checkmark.circle.fill" : "envelope")
+                        .foregroundStyle(model.recapCopied ? .green : .white.opacity(0.6))
+                }
+            }.buttonStyle(.plain).disabled(model.draftingRecap)
+                .help(model.recapCopied ? "Recap email copied!" : "Draft recap email (copies to clipboard)")
             Button { confirmDelete = true } label: {
                 Image(systemName: "trash").foregroundStyle(.red.opacity(0.8))
             }.buttonStyle(.plain).help("Delete meeting")
@@ -403,6 +443,41 @@ struct MeetingsView: View {
                         ForEach(kp, id: \.self) { bulletLine($0) }
                     }
                 }
+                if let chapters = t.chapters, !chapters.isEmpty {
+                    section("CHAPTERS") {
+                        ForEach(chapters) { chapterRow($0, in: t) }
+                    }
+                }
+                if let d = t.decisions, !d.isEmpty {
+                    section("DECISIONS") {
+                        ForEach(d, id: \.self) { text in
+                            HStack(alignment: .top, spacing: 9) {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.green.opacity(0.85))
+                                    .padding(.top, 2)
+                                Text(text).font(.system(size: 14)).foregroundStyle(.white)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+                if let q = t.openQuestions, !q.isEmpty {
+                    section("OPEN QUESTIONS") {
+                        ForEach(q, id: \.self) { text in
+                            HStack(alignment: .top, spacing: 9) {
+                                Image(systemName: "questionmark.circle")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.orange.opacity(0.85))
+                                    .padding(.top, 2)
+                                Text(text).font(.system(size: 14)).foregroundStyle(.white)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
             } else {
                 infoBox(MeetingAI_isAvailable
                         ? "Tap Summarize to generate an on-device AI summary, key points, and action items."
@@ -411,8 +486,14 @@ struct MeetingsView: View {
             }
 
             section("TALK TIME") {
-                ForEach(t.talkTime, id: \.speaker) { entry in talkTimeRow(entry.speaker, entry.fraction) }
+                ForEach(t.talkTime, id: \.speaker) { entry in
+                    talkTimeRow(entry.speaker, entry.fraction)
+                        .contextMenu { renameMenu(t, speaker: entry.speaker) }
+                }
+                interactivityRow(t)
             }
+
+            mentionsSection(t)
 
             if !t.chat.isEmpty {
                 section("Q&A") {
@@ -442,36 +523,64 @@ struct MeetingsView: View {
     }
 
     @ViewBuilder private func transcriptTab(_ t: Transcript) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(t.ordered) { seg in
-                HStack(alignment: .top, spacing: 11) {
-                    SpeakerAvatar(speaker: seg.speaker, size: 28)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(seg.speaker).font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(SpeakerStyle.color(seg.speaker))
-                            Text(timestamp(seg.start)).font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.4))
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(t.ordered) { seg in
+                    HStack(alignment: .top, spacing: 11) {
+                        SpeakerAvatar(speaker: seg.speaker, size: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(seg.speaker).font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(SpeakerStyle.color(seg.speaker))
+                                Text(timestamp(seg.start)).font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.4))
+                            }
+                            Text(seg.text).font(.system(size: 14)).foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text(seg.text).font(.system(size: 14)).foregroundStyle(.white)
-                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                    .id(seg.id)
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(model.scrollTarget == seg.id
+                                  ? Color.accentColor.opacity(0.14) : .clear))
+                    .contextMenu { renameMenu(t, speaker: seg.speaker) }
+                }
+            }
+            .padding(18)
+            .onAppear {
+                if let target = model.scrollTarget {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+            }
+            .onChange(of: model.scrollTarget) {
+                if let target = model.scrollTarget {
+                    withAnimation { proxy.scrollTo(target, anchor: .center) }
                 }
             }
         }
-        .padding(18)
     }
 
     @ViewBuilder private func actionsTab(_ t: Transcript) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             if let items = t.actionItems, !items.isEmpty {
-                ForEach(items, id: \.self) { item in
+                ForEach(items) { item in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "checkmark.circle").foregroundStyle(Color.accentColor).font(.system(size: 15))
-                        Text(item).font(.system(size: 14)).foregroundStyle(.white)
+                        Text(item.text).font(.system(size: 14)).foregroundStyle(.white)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
+                        if let owner = item.owner {
+                            HStack(spacing: 5) {
+                                SpeakerAvatar(speaker: owner, size: 16)
+                                Text(owner).font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.7))
+                            }
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(Capsule().fill(Color.white.opacity(0.07)))
+                        }
                     }
                 }
             } else {
@@ -510,6 +619,106 @@ struct MeetingsView: View {
             }
         }
         .padding(14)
+    }
+
+    // MARK: - Meeting intelligence blocks
+
+    /// A chapter: disclosure with a tappable timestamp chip that jumps the
+    /// transcript to that moment.
+    private func chapterRow(_ c: Chapter, in t: Transcript) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(c.bullets, id: \.self) { bulletLine($0) }
+            }
+            .padding(.top, 6)
+            .padding(.leading, 2)
+        } label: {
+            HStack(spacing: 9) {
+                Button { model.jump(to: c.startSeconds, in: t) } label: {
+                    Text(timestamp(c.startSeconds))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.accentColor.opacity(0.14)))
+                }
+                .buttonStyle(.plain)
+                .help("Jump to this moment in the transcript")
+                Text(c.title).font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+        .tint(.white.opacity(0.5))
+    }
+
+    /// Speaker switches per 10 minutes — a rough conversation-balance signal.
+    @ViewBuilder private func interactivityRow(_ t: Transcript) -> some View {
+        let ordered = t.ordered
+        let switches = zip(ordered, ordered.dropFirst())
+            .filter { $0.speaker != $1.speaker }.count
+        let per10 = t.duration > 60
+            ? Double(switches) / (t.duration / 600) : Double(switches)
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                .frame(width: 24)
+            Text("Interactivity").font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white).frame(width: 90, alignment: .leading)
+            Text("\(switches) turns · \(Int(per10.rounded()))/10 min")
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+            Spacer()
+        }
+    }
+
+    /// Where other speakers said your name, with jump links.
+    @ViewBuilder private func mentionsSection(_ t: Transcript) -> some View {
+        let hits = t.mentions(of: model.userFirstName)
+        if !hits.isEmpty {
+            section("MENTIONS OF YOU") {
+                ForEach(hits) { seg in
+                    Button {
+                        model.tab = .transcript
+                        model.scrollTarget = seg.id
+                    } label: {
+                        HStack(alignment: .top, spacing: 9) {
+                            Text(timestamp(seg.start))
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color.accentColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(seg.speaker).font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(SpeakerStyle.color(seg.speaker))
+                                Text(seg.text).font(.system(size: 13))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .lineLimit(2)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.white.opacity(0.04)))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Context-menu entry to rename a diarized speaker ("Speaker 1" → "Igor").
+    @ViewBuilder private func renameMenu(_ t: Transcript, speaker: String) -> some View {
+        if speaker != "You" {
+            Button("Rename \"\(speaker)\"…") {
+                renameTarget = speaker
+                renameText = ""
+            }
+            if let attendees = t.attendees, !attendees.isEmpty {
+                ForEach(attendees.filter { $0 != speaker }, id: \.self) { name in
+                    Button("Rename to \(name)") {
+                        model.renameSpeaker(in: t, from: speaker, to: name)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Building blocks
