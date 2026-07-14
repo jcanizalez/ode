@@ -84,8 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openNotes() {
         popover.performClose(nil)
-        // Recreate so the list reflects newly saved transcripts.
-        notesController = MeetingNotesWindowController()
+        // Recreate so the list reflects newly saved transcripts. The controller
+        // reference powers the live-meeting view (transcript-so-far + Q&A).
+        notesController = MeetingNotesWindowController(controller: controller)
         NSApp.activate(ignoringOtherApps: true)
         notesController?.showWindow(nil)
         notesController?.window?.makeKeyAndOrderFront(nil)

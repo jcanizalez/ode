@@ -42,13 +42,19 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
     private static let modelsLock = NSLock()
     private static var modelsTask: Task<AsrModels, Error>?
 
-    private static func sharedModels() async throws -> AsrModels {
+    private static func sharedModels(
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> AsrModels {
         modelsLock.lock()
         let task: Task<AsrModels, Error>
         if let existing = modelsTask {
             task = existing
         } else {
-            task = Task { try await AsrModels.downloadAndLoad() }
+            task = Task {
+                try await AsrModels.downloadAndLoad(progressHandler: { p in
+                    progress?(p.fractionCompleted)
+                })
+            }
             modelsTask = task
         }
         modelsLock.unlock()
@@ -63,10 +69,16 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
         }
     }
 
-    /// Ensure the Parakeet model is downloaded and loadable (~600 MB on first
-    /// run, cached afterwards).
-    public static func ensureModel() async throws {
-        _ = try await sharedModels()
+    /// Ensure the Parakeet model is downloaded and loadable (~470 MB on first
+    /// run, cached afterwards). `progress` reports download/compile progress
+    /// in 0...1 on an unspecified queue.
+    public static func ensureModel(progress: (@Sendable (Double) -> Void)? = nil) async throws {
+        _ = try await sharedModels(progress: progress)
+    }
+
+    /// True when the model files are already on disk (no download needed).
+    public static var modelIsCached: Bool {
+        AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory())
     }
 
     // MARK: - Session

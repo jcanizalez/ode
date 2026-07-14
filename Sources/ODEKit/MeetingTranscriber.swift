@@ -10,6 +10,7 @@ public final class MeetingTranscriber {
     private let others: any SpeechTranscribing
     private let lock = NSLock()
     private var segments: [TranscriptSegment] = []
+    private var liveChat: [ChatMessage] = []
     private var startedAt = Date()
     private var running = false
 
@@ -53,6 +54,30 @@ public final class MeetingTranscriber {
         lock.unlock()
     }
 
+    /// Snapshot of the meeting *so far* (nil when idle or nothing was said
+    /// yet). Lets the app show the transcript and answer questions about the
+    /// meeting while it is still running.
+    public func liveSnapshot() -> Transcript? {
+        lock.lock()
+        let segs = segments
+        let isRunning = running
+        let chat = liveChat
+        lock.unlock()
+        guard isRunning, !segs.isEmpty else { return nil }
+        let df = DateFormatter(); df.dateFormat = "h:mm a"
+        return Transcript(title: "\(df.string(from: startedAt)) Meeting",
+                          startedAt: startedAt, endedAt: Date(),
+                          segments: segs, chat: chat)
+    }
+
+    /// Record a Q&A exchange asked during the live meeting, so it's part of
+    /// the transcript when the meeting is saved.
+    public func recordChat(question: String, answer: String) {
+        lock.lock()
+        liveChat.append(ChatMessage(question: question, answer: answer))
+        lock.unlock()
+    }
+
     public func feedMic(_ buffer: AVAudioPCMBuffer) {
         guard running else { return }
         you.append(buffer)
@@ -70,14 +95,14 @@ public final class MeetingTranscriber {
         await you.finish()
         await others.finish()
 
-        lock.lock(); let segs = segments; lock.unlock()
+        lock.lock(); let segs = segments; let chat = liveChat; lock.unlock()
         guard !segs.isEmpty else { return nil }
 
         let ended = Date()
         let df = DateFormatter(); df.dateFormat = "h:mm a"
         let autoTitle = title ?? "\(df.string(from: startedAt)) Meeting"
         let transcript = Transcript(title: autoTitle, startedAt: startedAt,
-                                    endedAt: ended, segments: segs)
+                                    endedAt: ended, segments: segs, chat: chat)
         TranscriptStore.shared.save(transcript)
         return transcript
     }

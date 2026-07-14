@@ -38,8 +38,12 @@ struct SpeakerAvatar: View {
 /// The full "ODE — Meetings" window: meeting list + detail with Summary,
 /// Transcript and Action items tabs, plus on-device AI.
 struct MeetingsView: View {
-    @StateObject private var model = MeetingsModel()
+    @StateObject private var model: MeetingsModel
     @State private var confirmDelete = false
+
+    init(controller: ODEController? = nil) {
+        _model = StateObject(wrappedValue: MeetingsModel(controller: controller))
+    }
 
     var body: some View {
         HSplitView {
@@ -79,6 +83,9 @@ struct MeetingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
+                    if let live = model.live {
+                        liveRow(live)
+                    }
                     ForEach(model.groupedSections, id: \.title) { section in
                         Text(section.title.uppercased())
                             .font(.system(size: 10, weight: .semibold)).tracking(0.6)
@@ -107,9 +114,41 @@ struct MeetingsView: View {
         .buttonStyle(.plain)
     }
 
+    /// Pinned row for the meeting happening right now.
+    private func liveRow(_ t: Transcript) -> some View {
+        Button { model.viewingLive = true } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Circle().fill(Color.red).frame(width: 7, height: 7)
+                    Text(t.title).font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white).lineLimit(1)
+                    Spacer()
+                    Text("LIVE")
+                        .font(.system(size: 9, weight: .heavy)).tracking(0.8)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.red.opacity(0.85)))
+                }
+                Text(t.ordered.last?.text ?? "Listening…")
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(model.viewingLive ? Color.red.opacity(0.12) : Color.red.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 10)
+                        .stroke(model.viewingLive ? Color.red.opacity(0.5) : Color.red.opacity(0.2),
+                                lineWidth: 1)))
+            .padding(.horizontal, 8)
+            .padding(.top, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private func row(_ t: Transcript) -> some View {
-        let selected = model.selectedID == t.id
-        return Button { model.selectedID = t.id } label: {
+        let selected = model.selectedID == t.id && !model.viewingLive
+        return Button { model.selectedID = t.id; model.viewingLive = false } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Circle().fill(Color.accentColor).frame(width: 6, height: 6)
@@ -163,7 +202,9 @@ struct MeetingsView: View {
     // MARK: - Detail
 
     @ViewBuilder private var detail: some View {
-        if let t = model.selected {
+        if model.viewingLive, let t = model.live {
+            liveDetail(t)
+        } else if let t = model.selected {
             VStack(alignment: .leading, spacing: 0) {
                 detailHeader(t)
                 Divider().overlay(Color.white.opacity(0.08))
@@ -183,6 +224,77 @@ struct MeetingsView: View {
             Text("Select a meeting").foregroundStyle(.white.opacity(0.4))
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(white: 0.07))
         }
+    }
+
+    /// Detail pane for the meeting in progress: growing transcript, saved live
+    /// Q&A, and an ask bar answering from the transcript-so-far. Catch up on
+    /// what you missed without waiting for the meeting to end.
+    private func liveDetail(_ t: Transcript) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Circle().fill(Color.red).frame(width: 8, height: 8)
+                        Text(t.title).font(.system(size: 20, weight: .heavy)).foregroundStyle(.white)
+                        Text("LIVE")
+                            .font(.system(size: 10, weight: .heavy)).tracking(0.8)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.red.opacity(0.85)))
+                    }
+                    HStack(spacing: 10) {
+                        Text("Started \(timeText(t.startedAt))").foregroundStyle(.white.opacity(0.5))
+                        Text(durationText(t.duration)).foregroundStyle(.white.opacity(0.5))
+                        HStack(spacing: -5) {
+                            ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 20) }
+                        }
+                    }
+                    .font(.system(size: 12))
+                }
+                Spacer()
+            }
+            .padding(16)
+            Divider().overlay(Color.white.opacity(0.08))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        transcriptTab(t)
+                        if !t.chat.isEmpty {
+                            section("LIVE Q&A") {
+                                ForEach(t.chat) { msg in qaCard(msg) }
+                            }
+                            .padding(.horizontal, 18)
+                        }
+                        Color.clear.frame(height: 1).id("live-bottom")
+                    }
+                }
+                .onChange(of: t.segments.count) {
+                    withAnimation { proxy.scrollTo("live-bottom", anchor: .bottom) }
+                }
+            }
+            askBar(t, live: true)
+        }
+        .background(Color(white: 0.07))
+    }
+
+    private func qaCard(_ msg: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                Text(msg.question).font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12)).foregroundStyle(Color.accentColor)
+                Text(msg.answer).font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
     }
 
     private func detailHeader(_ t: Transcript) -> some View {
@@ -373,14 +485,15 @@ struct MeetingsView: View {
 
     // MARK: - Ask bar
 
-    private func askBar(_ t: Transcript) -> some View {
+    private func askBar(_ t: Transcript, live: Bool = false) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles").foregroundStyle(Color.accentColor.opacity(0.8))
-            TextField("Ask anything about this meeting…", text: $model.question)
+            TextField(live ? "Ask about the meeting so far…" : "Ask anything about this meeting…",
+                      text: $model.question)
                 .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(.white)
-                .onSubmit { model.ask(t) }
+                .onSubmit { live ? model.askLive(t) : model.ask(t) }
             if model.asking { ProgressView().controlSize(.small) }
-            Button { model.ask(t) } label: {
+            Button { live ? model.askLive(t) : model.ask(t) } label: {
                 Image(systemName: "arrow.up.circle.fill").font(.system(size: 22)).foregroundStyle(Color.accentColor)
             }.buttonStyle(.plain).disabled(model.question.isEmpty || model.asking)
         }
@@ -449,7 +562,7 @@ struct MeetingsView: View {
 
 /// Hosts the Meetings view in a window.
 final class MeetingNotesWindowController: NSWindowController {
-    init() {
+    init(controller: ODEController? = nil) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -457,7 +570,7 @@ final class MeetingNotesWindowController: NSWindowController {
         window.title = "ODE — Meetings"
         window.center()
         super.init(window: window)
-        window.contentView = NSHostingView(rootView: MeetingsView())
+        window.contentView = NSHostingView(rootView: MeetingsView(controller: controller))
     }
     required init?(coder: NSCoder) { fatalError() }
 }

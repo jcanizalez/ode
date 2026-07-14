@@ -32,6 +32,8 @@ final class ODEController: ObservableObject {
     @Published var transcribeEnabled = false
     @Published var transcribing = false
     @Published var asrEngine: TranscriptionEngine = .apple
+    /// 0...1 while the Parakeet model is downloading, nil otherwise.
+    @Published var modelDownloadProgress: Double?
 
     // Live audio levels (0...1) for the meters.
     @Published var micLevel: Float = 0
@@ -316,6 +318,31 @@ final class ODEController: ObservableObject {
         guard engine != asrEngine else { return }
         asrEngine = engine
         persistSettings()
+        if engine == .parakeet { prefetchParakeetModel() }
+    }
+
+    /// Download the Parakeet model in the background the moment the user picks
+    /// the engine, with visible progress — instead of stalling silently at the
+    /// start of their first transcribed meeting.
+    private func prefetchParakeetModel() {
+        guard !ParakeetStreamTranscriber.modelIsCached, modelDownloadProgress == nil else { return }
+        modelDownloadProgress = 0
+        Task {
+            do {
+                try await ParakeetStreamTranscriber.ensureModel { fraction in
+                    DispatchQueue.main.async { [weak self] in
+                        // ensureModel also reports model-compile progress on
+                        // later runs; only surface it while actually fetching.
+                        if self?.modelDownloadProgress != nil {
+                            self?.modelDownloadProgress = fraction
+                        }
+                    }
+                }
+            } catch {
+                NSLog("ODE: Parakeet model download failed: \(error.localizedDescription)")
+            }
+            await MainActor.run { self.modelDownloadProgress = nil }
+        }
     }
 
     func selectInput(_ id: AudioDeviceID) {
@@ -404,6 +431,23 @@ final class ODEController: ObservableObject {
             speakerEngine.bypassDenoise = !speakerEnabled
         }
         reconcileTranscription()
+    }
+
+    // MARK: - Live meeting access
+
+    /// Snapshot of the meeting currently being transcribed (nil when none).
+    var liveMeeting: Transcript? {
+        guard #available(macOS 26.0, *),
+              let mt = meetingTranscriber as? MeetingTranscriber else { return nil }
+        return mt.liveSnapshot()
+    }
+
+    /// Attach a live Q&A exchange to the in-progress meeting so it's saved
+    /// with the transcript when the meeting ends.
+    func recordLiveChat(question: String, answer: String) {
+        guard #available(macOS 26.0, *),
+              let mt = meetingTranscriber as? MeetingTranscriber else { return }
+        mt.recordChat(question: question, answer: answer)
     }
 
     // MARK: - Transcription

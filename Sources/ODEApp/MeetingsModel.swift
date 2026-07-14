@@ -20,6 +20,61 @@ final class MeetingsModel: ObservableObject {
     @Published var answer: String?
     @Published var aiError: String?
 
+    // Live meeting (in progress right now): pinned in the sidebar; questions
+    // can be asked about it in real time — e.g. after stepping away.
+    @Published var live: Transcript?
+    @Published var viewingLive = false
+
+    private weak var controller: ODEController?
+    private var liveTimer: Timer?
+
+    init(controller: ODEController? = nil) {
+        self.controller = controller
+        // Poll the in-progress transcript; segments arrive every few seconds
+        // during a call, so a 3 s refresh feels live without wasted work.
+        liveTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshLive() }
+        }
+        refreshLive()
+    }
+
+    deinit { liveTimer?.invalidate() }
+
+    func refreshLive() {
+        let snapshot = controller?.liveMeeting
+        let ended = (live != nil && snapshot == nil)
+        live = snapshot
+        if ended {
+            // Meeting just finished: it's being saved — show it in the list.
+            if viewingLive { viewingLive = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.reload()
+            }
+        }
+    }
+
+    /// Ask the on-device model about the meeting in progress. The exchange is
+    /// attached to the meeting and persisted when it's saved.
+    func askLive(_ t: Transcript) {
+        guard #available(macOS 26.0, *) else { aiError = aiUnavailableReason; return }
+        let q = question
+        guard !q.isEmpty else { return }
+        asking = true
+        answer = nil
+        Task {
+            do {
+                let a = try await MeetingAI.answer(q, about: t)
+                self.answer = a
+                self.question = ""
+                self.controller?.recordLiveChat(question: q, answer: a)
+                self.refreshLive()
+            } catch {
+                self.answer = "Couldn't answer: \(error.localizedDescription)"
+            }
+            self.asking = false
+        }
+    }
+
     var aiAvailable: Bool {
         if #available(macOS 26.0, *) { return MeetingAI.isAvailable }
         return false

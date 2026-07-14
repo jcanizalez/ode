@@ -160,7 +160,7 @@ struct PanelView: View {
                                 Circle().fill(Color.red).frame(width: 6, height: 6)
                             }
                         }
-                        Text(controller.transcribing ? "Transcribing…" : "Save meeting transcripts")
+                        Text(transcriptsSubtitle)
                             .font(.system(size: 11))
                             .foregroundStyle(.white.opacity(0.45))
                     }
@@ -205,6 +205,13 @@ struct PanelView: View {
                 .fill(Color.white.opacity(0.05))
                 .overlay(RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.white.opacity(0.10), lineWidth: 1)))
+    }
+
+    private var transcriptsSubtitle: String {
+        if let p = controller.modelDownloadProgress {
+            return "Downloading Parakeet model… \(Int(p * 100))%"
+        }
+        return controller.transcribing ? "Transcribing…" : "Save meeting transcripts"
     }
 
     // MARK: - Footer
