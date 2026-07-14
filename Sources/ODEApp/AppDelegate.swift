@@ -37,6 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // Stop processing and hide the virtual devices so users never see a
+        // dead "ODE Microphone"/"ODE Speaker" while the app isn't running.
+        controller.stopIfRunning()
+        controller.hideVirtualDevices()
+    }
+
     // MARK: - Popover
 
     @objc private func togglePopover() {

@@ -70,7 +70,27 @@ public final class LiveEngine {
 
     /// Optional sink for captured audio (post-resample, 48 kHz mono), used for
     /// transcription. Receives the same audio that is denoised/played.
-    public var onCapturedAudio: ((AVAudioPCMBuffer) -> Void)?
+    /// Lock-protected: it is set from the main thread while the audio tap
+    /// thread reads it, and closure loads/stores are not atomic.
+    private var capturedSinkLock = os_unfair_lock()
+    private var _onCapturedAudio: ((AVAudioPCMBuffer) -> Void)?
+    public var onCapturedAudio: ((AVAudioPCMBuffer) -> Void)? {
+        get { os_unfair_lock_lock(&capturedSinkLock); defer { os_unfair_lock_unlock(&capturedSinkLock) }; return _onCapturedAudio }
+        set { os_unfair_lock_lock(&capturedSinkLock); _onCapturedAudio = newValue; os_unfair_lock_unlock(&capturedSinkLock) }
+    }
+
+    /// Called (on an arbitrary thread) when either engine stops itself because
+    /// the audio configuration changed — device unplugged, sample rate change,
+    /// etc. The owner should stop and re-start the loop.
+    public var onConfigurationChange: (() -> Void)?
+    private var configObservers: [NSObjectProtocol] = []
+
+    /// True while the loop is meant to run AND both engines are still alive.
+    /// After a configuration change kills an engine, this turns false even
+    /// though `start` succeeded earlier — callers use it to detect zombies.
+    public var isHealthy: Bool {
+        isRunning && captureEngine.isRunning && playbackEngine.isRunning
+    }
 
     /// Smoothed input level in 0...1, updated from the capture tap. Read this
     /// for a live audio meter. Resets to 0 when the engine stops.
@@ -114,55 +134,94 @@ public final class LiveEngine {
         ring.reset()
         denoiser.resetStreaming()
 
-        let fmt = AudioIO.monoFormat
-
-        // --- Playback graph: source node pulls denoised audio from the ring ---
-        let node = AVAudioSourceNode(format: fmt) { [ring] _, _, frameCount, audioBufferList in
-            let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
-            let n = Int(frameCount)
-            if let ptr = abl[0].mData?.assumingMemoryBound(to: Float.self) {
-                ring.read(into: ptr, count: n)
+        // If anything below throws we must tear the half-built graph down —
+        // otherwise the next start() would stack a second source node.
+        do {
+            // --- Capture side first: route + validate the input format before
+            // touching the playback graph. If the selected device just
+            // disappeared, inputFormat comes back invalid (0 Hz / 0 ch) and
+            // installTap would raise an uncatchable NSException — throw a
+            // proper error instead of crashing the app.
+            let input = captureEngine.inputNode
+            if let inDev = inputDevice {
+                try setInputDevice(captureEngine, deviceID: inDev.id)
             }
-            return noErr
-        }
-        sourceNode = node
-        playbackEngine.attach(node)
-        playbackEngine.connect(node, to: playbackEngine.mainMixerNode, format: fmt)
-
-        if let dev = outputDevice {
-            try setOutputDevice(playbackEngine, deviceID: dev.id)
-        }
-
-        // --- Capture graph: tap mic, denoise, push into the ring ---
-        let input = captureEngine.inputNode
-        if let inDev = inputDevice {
-            try setInputDevice(captureEngine, deviceID: inDev.id)
-        }
-        let inFormat = input.inputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, weak self] buffer, _ in
-            self?.onCapturedAudio?(buffer)
-            let mono = AudioIO.resampleToMono48k(buffer)
-            self?.updateLevel(mono)
-            if self?.bypassDenoise == true {
-                // Pass audio through untouched so the call still hears you,
-                // just without noise removal.
-                ring.write(mono)
-            } else {
-                let clean = denoiser.processStreaming(mono)
-                if !clean.isEmpty { ring.write(clean) }
+            let inFormat = input.inputFormat(forBus: 0)
+            guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
+                throw NSError(domain: "ode.live", code: -11,
+                              userInfo: [NSLocalizedDescriptionKey:
+                                "Input device has no valid format (was it disconnected?)"])
             }
+
+            let fmt = AudioIO.monoFormat
+
+            // --- Playback graph: source node pulls denoised audio from the ring ---
+            let node = AVAudioSourceNode(format: fmt) { [ring] _, _, frameCount, audioBufferList in
+                let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
+                let n = Int(frameCount)
+                if let ptr = abl[0].mData?.assumingMemoryBound(to: Float.self) {
+                    ring.read(into: ptr, count: n)
+                }
+                return noErr
+            }
+            sourceNode = node
+            playbackEngine.attach(node)
+            playbackEngine.connect(node, to: playbackEngine.mainMixerNode, format: fmt)
+
+            if let dev = outputDevice {
+                try setOutputDevice(playbackEngine, deviceID: dev.id)
+            }
+
+            // --- Capture tap: mic -> denoise -> ring ---
+            input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, weak self] buffer, _ in
+                self?.onCapturedAudio?(buffer)
+                let mono = AudioIO.resampleToMono48k(buffer)
+                self?.updateLevel(mono)
+                if self?.bypassDenoise == true {
+                    // Pass audio through untouched so the call still hears you,
+                    // just without noise removal.
+                    ring.write(mono)
+                } else {
+                    let clean = denoiser.processStreaming(mono)
+                    if !clean.isEmpty { ring.write(clean) }
+                }
+            }
+
+            captureEngine.prepare()
+            playbackEngine.prepare()
+            try playbackEngine.start()
+            try captureEngine.start()
+        } catch {
+            teardown()
+            throw error
         }
 
-        captureEngine.prepare()
-        playbackEngine.prepare()
-        try playbackEngine.start()
-        try captureEngine.start()
+        // Both engines stop themselves when the configuration changes (device
+        // unplugged, sample-rate change). Surface that so the owner can restart
+        // the loop instead of silently going dead mid-call.
+        let nc = NotificationCenter.default
+        for engine in [captureEngine, playbackEngine] {
+            configObservers.append(nc.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+            ) { [weak self] _ in
+                self?.onConfigurationChange?()
+            })
+        }
+
         isRunning = true
     }
 
     public func stop() {
         guard isRunning else { return }
         isRunning = false
+        teardown()
+    }
+
+    /// Tear the graphs down to a state from which `start` can build cleanly.
+    /// Safe to call on a half-built graph (start-failure path).
+    private func teardown() {
+        configObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        configObservers.removeAll()
         captureEngine.inputNode.removeTap(onBus: 0)
         captureEngine.stop()
         _ = denoiser.flushStreaming()

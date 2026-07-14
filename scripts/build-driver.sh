@@ -14,12 +14,19 @@
 #
 # The visible + hidden device in each driver share one buffer, so audio routes
 # between them behind the scenes. Requires full Xcode.
+#
+# scripts/ode-driver-visibility.patch (applied below) makes the visible device
+# start HIDDEN and adds a custom property ('odev') the ODE app sets to show it
+# while running — with a heartbeat watchdog that re-hides it if the app dies —
+# so users never see a dead "ODE Microphone"/"ODE Speaker" in device pickers.
 
 set -e
 cd "$(dirname "$0")/.."
 
 DIST="dist"
 SRC_ROOT="$(mktemp -d)"
+# Pin BlackHole so the vendored visibility patch always applies cleanly.
+BLACKHOLE_COMMIT="e2b22aaaba4e507a097131704bf96dabc004d9cf"
 
 XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
 if [ -z "$XCODE" ]; then
@@ -37,7 +44,11 @@ build_driver() {
     src="$SRC_ROOT/$out"; build="$(mktemp -d)"
 
     echo "Fetching BlackHole source for $vis…"
-    git clone --depth 1 https://github.com/ExistentialAudio/BlackHole.git "$src" >/dev/null 2>&1
+    git clone https://github.com/ExistentialAudio/BlackHole.git "$src" >/dev/null 2>&1
+    git -C "$src" checkout -q "$BLACKHOLE_COMMIT"
+
+    # Dynamic device visibility (show while ODE runs, hide otherwise).
+    patch -s -d "$src" -p1 < scripts/ode-driver-visibility.patch
 
     # Device display names contain spaces, so set them directly in source.
     /usr/bin/sed -i '' \
@@ -55,7 +66,7 @@ build_driver() {
         kDriver_Name=\"'"$drv"'\"
         kPlugIn_BundleID=\"'"$bundle"'\"
         kNumber_Of_Channels=2
-        kDevice_IsHidden=false
+        kDevice_IsHidden=true
         kDevice_HasInput='"$d1in"'
         kDevice_HasOutput='"$d1out"'
         kDevice2_IsHidden=true

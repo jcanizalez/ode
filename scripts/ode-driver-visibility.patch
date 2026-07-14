@@ -1,0 +1,198 @@
+diff --git a/BlackHole/BlackHole.c b/BlackHole/BlackHole.c
+index ac516ef..c21e1c0 100644
+--- a/BlackHole/BlackHole.c
++++ b/BlackHole/BlackHole.c
+@@ -254,6 +254,60 @@ static pthread_mutex_t              gPlugIn_StateMutex                  = PTHREA
+ static UInt32                       gPlugIn_RefCount                    = 0;
+ static AudioServerPlugInHostRef     gPlugIn_Host                        = NULL;
+ 
++//	ODE: dynamic visibility for the main (visible) device.
++//
++//	The device's hidden state is runtime-mutable instead of the compile-time
++//	kDevice_IsHidden constant. The controlling app shows the device by setting
++//	the custom property kODE_VisibilitySelector to the CFString "1" and hides
++//	it with "0". While visible, the app must keep re-setting "1" every few
++//	seconds as a heartbeat; a watchdog hides the device again if the pings
++//	stop (app crashed or was killed), so users are never left with a dead,
++//	selectable device.
++#define                             kODE_VisibilitySelector             'odev'
++#define                             kODE_WatchdogIntervalSec            5
++#define                             kODE_WatchdogTimeoutSec             15.0
++static bool                         gDevice_Visible                     = !kDevice_IsHidden;
++static CFAbsoluteTime               gDevice_LastPing                    = 0;
++static dispatch_source_t            gDevice_VisibilityWatchdog          = NULL;
++
++static void ODE_NotifyHiddenChanged(void)
++{
++	if(gPlugIn_Host != NULL)
++	{
++		AudioObjectPropertyAddress theAddress = { kAudioDevicePropertyIsHidden, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
++		gPlugIn_Host->PropertiesChanged(gPlugIn_Host, kObjectID_Device, 1, &theAddress);
++	}
++}
++
++//	Create the (persistent) watchdog timer on first use. Must be called with
++//	gPlugIn_StateMutex held. The timer is never cancelled; its handler is a
++//	cheap staleness check every kODE_WatchdogIntervalSec.
++static void ODE_EnsureVisibilityWatchdog(void)
++{
++	if(gDevice_VisibilityWatchdog != NULL)
++	{
++		return;
++	}
++	gDevice_VisibilityWatchdog = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
++	dispatch_source_set_timer(gDevice_VisibilityWatchdog, dispatch_time(DISPATCH_TIME_NOW, kODE_WatchdogIntervalSec * NSEC_PER_SEC), kODE_WatchdogIntervalSec * NSEC_PER_SEC, NSEC_PER_SEC);
++	dispatch_source_set_event_handler(gDevice_VisibilityWatchdog, ^{
++		bool theDidHide = false;
++		pthread_mutex_lock(&gPlugIn_StateMutex);
++		if(gDevice_Visible && (CFAbsoluteTimeGetCurrent() - gDevice_LastPing) > kODE_WatchdogTimeoutSec)
++		{
++			gDevice_Visible = false;
++			theDidHide = true;
++		}
++		pthread_mutex_unlock(&gPlugIn_StateMutex);
++		if(theDidHide)
++		{
++			syslog(LOG_NOTICE, "ODE driver: visibility heartbeat lost, hiding device");
++			ODE_NotifyHiddenChanged();
++		}
++	});
++	dispatch_resume(gDevice_VisibilityWatchdog);
++}
++
+ 
+ static CFStringRef                  gBox_Name                           = NULL;
+ 
+@@ -2194,9 +2248,15 @@ static Boolean	BlackHole_HasDeviceProperty(AudioServerPlugInDriverRef inDriver,
+ 		case kAudioDevicePropertyZeroTimeStampPeriod:
+ 		case kAudioDevicePropertyIcon:
+ 		case kAudioDevicePropertyStreams:
++		case kAudioObjectPropertyCustomPropertyInfoList:
+ 			theAnswer = true;
+ 			break;
+-			
++
++		case kODE_VisibilitySelector:
++			//	ODE visibility control lives only on the visible device.
++			theAnswer = (inObjectID == kObjectID_Device);
++			break;
++
+ 		case kAudioDevicePropertyDeviceCanBeDefaultDevice:
+ 		case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice:
+ 		case kAudioDevicePropertyLatency:
+@@ -2257,10 +2317,12 @@ static OSStatus	BlackHole_IsDevicePropertySettable(AudioServerPlugInDriverRef in
+ 		case kAudioDevicePropertyPreferredChannelLayout:
+ 		case kAudioDevicePropertyZeroTimeStampPeriod:
+ 		case kAudioDevicePropertyIcon:
++		case kAudioObjectPropertyCustomPropertyInfoList:
+ 			*outIsSettable = false;
+ 			break;
+-		
++
+ 		case kAudioDevicePropertyNominalSampleRate:
++		case kODE_VisibilitySelector:
+ 			*outIsSettable = true;
+ 			break;
+ 		
+@@ -2381,6 +2443,14 @@ static OSStatus	BlackHole_GetDevicePropertyDataSize(AudioServerPlugInDriverRef i
+ 			*outDataSize = sizeof(UInt32);
+ 			break;
+ 
++		case kAudioObjectPropertyCustomPropertyInfoList:
++			*outDataSize = sizeof(AudioServerPlugInCustomPropertyInfo);
++			break;
++
++		case kODE_VisibilitySelector:
++			*outDataSize = sizeof(CFStringRef);
++			break;
++
+ 		case kAudioDevicePropertyPreferredChannelsForStereo:
+ 			*outDataSize = 2 * sizeof(UInt32);
+ 			break;
+@@ -2779,13 +2849,17 @@ static OSStatus	BlackHole_GetDevicePropertyData(AudioServerPlugInDriverRef inDri
+ 		
+ 		case kAudioDevicePropertyIsHidden:
+ 			//	This returns whether or not the device is visible to clients.
++			//	ODE: the main device's hidden state is runtime-mutable — hidden
++			//	unless the ODE app is running and pinging kODE_VisibilitySelector.
+ 			FailWithAction(inDataSize < sizeof(UInt32), theAnswer = kAudioHardwareBadPropertySizeError, Done, "BlackHole_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyIsHidden for the device");
+-            
++
+             switch (inObjectID) {
+                 case kObjectID_Device:
+-                    *((UInt32*)outData) = kDevice_IsHidden;
++                    pthread_mutex_lock(&gPlugIn_StateMutex);
++                    *((UInt32*)outData) = gDevice_Visible ? 0 : 1;
++                    pthread_mutex_unlock(&gPlugIn_StateMutex);
+                     break;
+-                
++
+                 case kObjectID_Device2:
+                     *((UInt32*)outData) = kDevice2_IsHidden;
+                     break;
+@@ -2793,6 +2867,24 @@ static OSStatus	BlackHole_GetDevicePropertyData(AudioServerPlugInDriverRef inDri
+ 			*outDataSize = sizeof(UInt32);
+ 			break;
+ 
++		case kAudioObjectPropertyCustomPropertyInfoList:
++			//	One custom property: the ODE visibility toggle (CFString "0"/"1").
++			FailWithAction(inDataSize < sizeof(AudioServerPlugInCustomPropertyInfo), theAnswer = kAudioHardwareBadPropertySizeError, Done, "BlackHole_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyCustomPropertyInfoList for the device");
++			((AudioServerPlugInCustomPropertyInfo*)outData)->mSelector = kODE_VisibilitySelector;
++			((AudioServerPlugInCustomPropertyInfo*)outData)->mPropertyDataType = kAudioServerPlugInCustomPropertyDataTypeCFString;
++			((AudioServerPlugInCustomPropertyInfo*)outData)->mQualifierDataType = kAudioServerPlugInCustomPropertyDataTypeNone;
++			*outDataSize = sizeof(AudioServerPlugInCustomPropertyInfo);
++			break;
++
++		case kODE_VisibilitySelector:
++			//	"1" while the device is visible, "0" while hidden.
++			FailWithAction(inDataSize < sizeof(CFStringRef), theAnswer = kAudioHardwareBadPropertySizeError, Done, "BlackHole_GetDevicePropertyData: not enough space for the return value of kODE_VisibilitySelector for the device");
++			pthread_mutex_lock(&gPlugIn_StateMutex);
++			*((CFStringRef*)outData) = gDevice_Visible ? CFSTR("1") : CFSTR("0");
++			pthread_mutex_unlock(&gPlugIn_StateMutex);
++			*outDataSize = sizeof(CFStringRef);
++			break;
++
+ 		case kAudioDevicePropertyPreferredChannelsForStereo:
+ 			//	This property returns which two channels to use as left/right for stereo
+ 			//	data by default. Note that the channel numbers are 1-based.xz
+@@ -2896,7 +2988,39 @@ static OSStatus	BlackHole_SetDevicePropertyData(AudioServerPlugInDriverRef inDri
+ 				dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ gPlugIn_Host->RequestDeviceConfigurationChange(gPlugIn_Host, kObjectID_Device, ChangeAction_SetSampleRate, NULL); });
+ 			}
+ 			break;
+-		
++
++		case kODE_VisibilitySelector:
++		{
++			//	ODE visibility ping: "1" shows the device and (re)arms the crash
++			//	watchdog; "0" hides it immediately. The controlling app re-sends
++			//	"1" every few seconds as a heartbeat while it is running.
++			FailWithAction(inObjectID != kObjectID_Device, theAnswer = kAudioHardwareBadObjectError, Done, "BlackHole_SetDevicePropertyData: kODE_VisibilitySelector is only on the main device");
++			FailWithAction(inDataSize != sizeof(CFStringRef), theAnswer = kAudioHardwareBadPropertySizeError, Done, "BlackHole_SetDevicePropertyData: wrong size for the data for kODE_VisibilitySelector");
++			CFStringRef theVisibleString = *((CFStringRef*)inData);
++			FailWithAction((theVisibleString == NULL) || (CFGetTypeID(theVisibleString) != CFStringGetTypeID()), theAnswer = kAudioHardwareIllegalOperationError, Done, "BlackHole_SetDevicePropertyData: the value for kODE_VisibilitySelector is not a CFString");
++			{
++				bool theVisible = (CFStringCompare(theVisibleString, CFSTR("1"), 0) == kCFCompareEqualTo);
++				bool theChanged = false;
++				pthread_mutex_lock(&gPlugIn_StateMutex);
++				theChanged = (gDevice_Visible != theVisible);
++				gDevice_Visible = theVisible;
++				gDevice_LastPing = CFAbsoluteTimeGetCurrent();
++				if(theVisible)
++				{
++					ODE_EnsureVisibilityWatchdog();
++				}
++				pthread_mutex_unlock(&gPlugIn_StateMutex);
++				if(theChanged)
++				{
++					*outNumberPropertiesChanged = 1;
++					outChangedAddresses[0].mSelector = kAudioDevicePropertyIsHidden;
++					outChangedAddresses[0].mScope = kAudioObjectPropertyScopeGlobal;
++					outChangedAddresses[0].mElement = kAudioObjectPropertyElementMain;
++				}
++			}
++			break;
++		}
++
+ 		default:
+ 			theAnswer = kAudioHardwareUnknownPropertyError;
+ 			break;

@@ -83,6 +83,31 @@ public enum AudioDevices {
         deviceFor(selector: kAudioHardwarePropertyDefaultInputDevice)
     }
 
+    // MARK: - ODE device visibility
+
+    /// Custom driver property ('odev') on the visible ODE devices. Setting the
+    /// CFString "1" shows the device; "0" hides it. The driver auto-hides ~15 s
+    /// after the last "1", so callers must re-send it periodically (heartbeat)
+    /// while the app runs. Devices stay resolvable by UID while hidden.
+    private static let visibilitySelector: AudioObjectPropertySelector = 0x6F646576 // 'odev'
+
+    /// Show or hide a visible ODE device (resolved by UID, works while hidden).
+    /// Returns true when the driver accepted the change.
+    @discardableResult
+    public static func setVisible(_ visible: Bool, uid: String) -> Bool {
+        guard let device = findByUID(uid) else { return false }
+        var addr = AudioObjectPropertyAddress(
+            mSelector: visibilitySelector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value = (visible ? "1" : "0") as CFString
+        let status = withUnsafePointer(to: &value) { ptr in
+            AudioObjectSetPropertyData(device.id, &addr, 0, nil,
+                                       UInt32(MemoryLayout<CFString>.size), ptr)
+        }
+        return status == noErr
+    }
+
     // MARK: - Device usage observation
 
     /// Whether the device's **input** is currently in use by any process.
@@ -154,6 +179,47 @@ public enum AudioDevices {
         var addr = observer.addr
         AudioObjectRemovePropertyListenerBlock(
             observer.id, &addr, DispatchQueue.global(qos: .userInitiated), observer.block)
+    }
+
+    // MARK: - Hardware-wide observation
+
+    /// Token for a system-object property listener; retain it and pass to
+    /// `removeHardwareObserver` to stop.
+    public final class HardwareObserver {
+        let block: AudioObjectPropertyListenerBlock
+        var addr: AudioObjectPropertyAddress
+        init(block: @escaping AudioObjectPropertyListenerBlock,
+             addr: AudioObjectPropertyAddress) {
+            self.block = block
+            self.addr = addr
+        }
+    }
+
+    /// Observes a hardware-level property on the system object. Use with
+    /// `kAudioHardwarePropertyDevices` (device plugged/unplugged/hidden) or
+    /// `kAudioHardwarePropertyDefault{Input,Output}Device`. The handler is
+    /// invoked on a background CoreAudio queue.
+    public static func addHardwareObserver(
+        _ selector: AudioObjectPropertySelector,
+        onChange: @escaping () -> Void
+    ) -> HardwareObserver? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let block: AudioObjectPropertyListenerBlock = { _, _ in onChange() }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr,
+            DispatchQueue.global(qos: .userInitiated), block)
+        guard status == noErr else { return nil }
+        return HardwareObserver(block: block, addr: addr)
+    }
+
+    public static func removeHardwareObserver(_ observer: HardwareObserver) {
+        var addr = observer.addr
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr,
+            DispatchQueue.global(qos: .userInitiated), observer.block)
     }
 
     // MARK: - private

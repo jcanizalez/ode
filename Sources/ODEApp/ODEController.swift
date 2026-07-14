@@ -40,7 +40,10 @@ final class ODEController: ObservableObject {
     private let speakerEngine = LiveEngine()
     private var micObserver: AudioDevices.UsageObserver?
     private var speakerObserver: AudioDevices.UsageObserver?
+    private var hardwareObservers: [AudioDevices.HardwareObserver] = []
+    private var pendingHardwareChange: DispatchWorkItem?
     private var levelTimer: Timer?
+    private var visibilityTimer: Timer?
 
     private var meetingTranscriber: Any?  // MeetingTranscriber (macOS 26+)
 
@@ -50,6 +53,14 @@ final class ODEController: ObservableObject {
         micEnabled = d.object(forKey: Keys.micEnabled) as? Bool ?? false
         speakerEnabled = d.object(forKey: Keys.speakerEnabled) as? Bool ?? false
         transcribeEnabled = d.object(forKey: Keys.transcribeEnabled) as? Bool ?? false
+
+        // The virtual devices are hidden while ODE isn't running, so users
+        // never see a dead device in pickers. Show them now, and keep pinging
+        // the driver (it auto-hides ~15 s after the pings stop — crash safety).
+        showVirtualDevices()
+        visibilityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.showVirtualDevices()
+        }
 
         refreshDevices()
         // Prefer a remembered device (by UID, since IDs change across reboots).
@@ -62,6 +73,18 @@ final class ODEController: ObservableObject {
         speakerEngine.bypassDenoise = !speakerEnabled
 
         installObservers()
+        installHardwareObservers()
+
+        // When a device unplugs or its sample rate changes mid-call, the
+        // engines stop themselves. Restart the affected path so audio comes
+        // back instead of silently dying while the UI still shows "Active".
+        micEngine.onConfigurationChange = { [weak self] in
+            DispatchQueue.main.async { self?.restartMicPath() }
+        }
+        speakerEngine.onConfigurationChange = { [weak self] in
+            DispatchQueue.main.async { self?.restartSpeakerPath() }
+        }
+
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.micLevel = self.micActive ? self.micEngine.currentLevel : 0
@@ -114,40 +137,115 @@ final class ODEController: ObservableObject {
 
     deinit {
         levelTimer?.invalidate()
+        visibilityTimer?.invalidate()
         if let o = micObserver { AudioDevices.removeUsageObserver(o) }
         if let o = speakerObserver { AudioDevices.removeUsageObserver(o) }
+        hardwareObservers.forEach { AudioDevices.removeHardwareObserver($0) }
+    }
+
+    // MARK: - Hardware-change resilience
+
+    /// React to device plug/unplug and default-device changes: refresh the
+    /// pickers, re-resolve the virtual devices (their IDs change when
+    /// coreaudiod restarts, leaving the old usage observers dead), and
+    /// reconcile both paths. Debounced — these notifications come in bursts.
+    private func installHardwareObservers() {
+        let selectors: [AudioObjectPropertySelector] = [
+            kAudioHardwarePropertyDevices,
+            kAudioHardwarePropertyDefaultInputDevice,
+            kAudioHardwarePropertyDefaultOutputDevice,
+        ]
+        hardwareObservers = selectors.compactMap { sel in
+            AudioDevices.addHardwareObserver(sel) { [weak self] in
+                DispatchQueue.main.async { self?.scheduleHardwareChange() }
+            }
+        }
+    }
+
+    private func scheduleHardwareChange() {
+        pendingHardwareChange?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.handleHardwareChange() }
+        pendingHardwareChange = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func handleHardwareChange() {
+        refreshDevices()
+        installObservers()
+        // If a path's engine died with the device change (or its device
+        // vanished), stop it so reconcile can start it again cleanly.
+        if micActive && !micEngine.isHealthy { micEngine.stop(); micActive = false }
+        if speakerActive && !speakerEngine.isHealthy { speakerEngine.stop(); speakerActive = false }
+        reconcileMic()
+        reconcileSpeaker()
+    }
+
+    /// Restart a path after its engine stopped itself (configuration change).
+    private func restartMicPath() {
+        guard micActive else { return }
+        micEngine.stop()
+        micActive = false
+        refreshDevices()
+        reconcileMic()
+    }
+
+    private func restartSpeakerPath() {
+        guard speakerActive else { return }
+        speakerEngine.stop()
+        speakerActive = false
+        refreshDevices()
+        reconcileSpeaker()
     }
 
     // MARK: - Virtual devices
 
+    /// CoreAudio UIDs of the four ODE devices (two per driver). UIDs are
+    /// stable across reboots and resolve even while a device is hidden.
+    private enum VirtualUID {
+        static let mic = "ODE-Mic2ch_UID"
+        static let micFeed = "ODE-Mic2ch_2_UID"
+        static let speaker = "ODE-Spk2ch_UID"
+        static let speakerTap = "ODE-Spk2ch_2_UID"
+    }
+
     /// Visible "ODE Microphone" (input-only). Apps select it as their mic; ODE
     /// watches it for usage. ODE feeds audio via the hidden "ODE Mic Feed".
+    /// Resolved by UID: the device is hidden until `showVirtualDevices()` ran,
+    /// and hidden devices don't appear in name scans.
     var virtualMic: AudioDevices.Device? {
-        AudioDevices.all().first {
-            $0.name.localizedCaseInsensitiveContains("ode microphone")
-        }
+        AudioDevices.findByUID(VirtualUID.mic)
     }
 
     /// Hidden output device that backs ODE Microphone. ODE writes denoised
     /// voice here; it flows to the visible mic's input behind the scenes.
-    /// Hidden devices aren't enumerated, so resolve it by its known UID.
     var micFeed: AudioDevices.Device? {
-        AudioDevices.findByUID("ODE-Mic2ch_2_UID")
+        AudioDevices.findByUID(VirtualUID.micFeed)
     }
 
     /// Visible "ODE Speaker" (output-only). Apps select it as their speaker; ODE
     /// watches it for usage and reads the audio via the hidden "ODE Spk Tap".
     var virtualSpeaker: AudioDevices.Device? {
-        AudioDevices.all().first {
-            $0.name.localizedCaseInsensitiveContains("ode speaker")
-        }
+        AudioDevices.findByUID(VirtualUID.speaker)
     }
 
     /// Hidden input device that backs ODE Speaker. ODE reads incoming call
     /// audio here, denoises it, and plays it to your real output.
-    /// Hidden devices aren't enumerated, so resolve it by its known UID.
     var speakerTap: AudioDevices.Device? {
-        AudioDevices.findByUID("ODE-Spk2ch_2_UID")
+        AudioDevices.findByUID(VirtualUID.speakerTap)
+    }
+
+    /// Make the visible ODE devices appear in system device lists. Also serves
+    /// as the driver heartbeat — called every 5 s while the app runs.
+    private func showVirtualDevices() {
+        AudioDevices.setVisible(true, uid: VirtualUID.mic)
+        AudioDevices.setVisible(true, uid: VirtualUID.speaker)
+    }
+
+    /// Hide the ODE devices from system device lists (called on quit, so users
+    /// never see a dead device while ODE isn't running).
+    func hideVirtualDevices() {
+        AudioDevices.setVisible(false, uid: VirtualUID.mic)
+        AudioDevices.setVisible(false, uid: VirtualUID.speaker)
     }
 
     var virtualMicInstalled: Bool { virtualMic != nil }
