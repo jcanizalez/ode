@@ -43,6 +43,11 @@ final class ODEController: ObservableObject {
 
     private let micEngine = LiveEngine()
     private let speakerEngine = LiveEngine()
+    /// Engine start/stop performs blocking CoreAudio calls (device pinning,
+    /// TCC checks) that can stall for seconds. They run here so the main
+    /// thread — and with it the UI and the device-visibility heartbeat —
+    /// never freezes.
+    private let engineQueue = DispatchQueue(label: "ode.engine", qos: .userInitiated)
     private var micObserver: AudioDevices.UsageObserver?
     private var speakerObserver: AudioDevices.UsageObserver?
     private var hardwareObservers: [AudioDevices.HardwareObserver] = []
@@ -186,8 +191,14 @@ final class ODEController: ObservableObject {
         installObservers()
         // If a path's engine died with the device change (or its device
         // vanished), stop it so reconcile can start it again cleanly.
-        if micActive && !micEngine.isHealthy { micEngine.stop(); micActive = false }
-        if speakerActive && !speakerEngine.isHealthy { speakerEngine.stop(); speakerActive = false }
+        if micActive && !micEngine.isHealthy {
+            micActive = false
+            engineQueue.async { [micEngine] in micEngine.stop() }
+        }
+        if speakerActive && !speakerEngine.isHealthy {
+            speakerActive = false
+            engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+        }
         reconcileMic()
         reconcileSpeaker()
     }
@@ -195,16 +206,16 @@ final class ODEController: ObservableObject {
     /// Restart a path after its engine stopped itself (configuration change).
     private func restartMicPath() {
         guard micActive else { return }
-        micEngine.stop()
         micActive = false
+        engineQueue.async { [micEngine] in micEngine.stop() }
         refreshDevices()
         reconcileMic()
     }
 
     private func restartSpeakerPath() {
         guard speakerActive else { return }
-        speakerEngine.stop()
         speakerActive = false
+        engineQueue.async { [speakerEngine] in speakerEngine.stop() }
         refreshDevices()
         reconcileSpeaker()
     }
@@ -369,21 +380,33 @@ final class ODEController: ObservableObject {
 
     func selectInput(_ id: AudioDeviceID) {
         selectedInputID = id
-        if micActive { micEngine.stop(); micActive = false }
+        if micActive {
+            micActive = false
+            engineQueue.async { [micEngine] in micEngine.stop() }
+        }
         persistSettings()
         reconcileMic()
     }
 
     func selectOutput(_ id: AudioDeviceID) {
         selectedOutputID = id
-        if speakerActive { speakerEngine.stop(); speakerActive = false }
+        if speakerActive {
+            speakerActive = false
+            engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+        }
         persistSettings()
         reconcileSpeaker()
     }
 
     func stopIfRunning() {
-        if micActive { micEngine.stop(); micActive = false }
-        if speakerActive { speakerEngine.stop(); speakerActive = false }
+        if micActive {
+            micActive = false
+            engineQueue.async { [micEngine] in micEngine.stop() }
+        }
+        if speakerActive {
+            speakerActive = false
+            engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+        }
     }
 
     // MARK: - Usage gating
@@ -413,17 +436,22 @@ final class ODEController: ObservableObject {
         guard let mic = virtualMic else { return }
         let inUse = AudioDevices.isInputInUse(mic.id)
         if inUse && !micActive {
+            if selectedInput == nil { refreshDevices() }  // device vanished — fall back
             guard let input = selectedInput,
                   let feed = micFeed, input.id != feed.id else { return }
-            do {
-                try micEngine.start(inputDevice: input, outputDevice: feed, bypass: !micEnabled)
-                micActive = true
-            } catch {
-                micActive = false
-                NSLog("ODE: mic engine failed: \(error.localizedDescription)")
+            micActive = true  // optimistic; cleared if start fails
+            let bypass = !micEnabled
+            engineQueue.async { [weak self, micEngine] in
+                do {
+                    try micEngine.start(inputDevice: input, outputDevice: feed, bypass: bypass)
+                } catch {
+                    NSLog("ODE: mic engine failed: \(error.localizedDescription)")
+                    DispatchQueue.main.async { self?.micActive = false }
+                }
             }
         } else if !inUse && micActive {
-            micEngine.stop(); micActive = false
+            micActive = false
+            engineQueue.async { [micEngine] in micEngine.stop() }
         } else if micActive {
             micEngine.bypassDenoise = !micEnabled
         }
@@ -437,18 +465,23 @@ final class ODEController: ObservableObject {
         guard let spk = virtualSpeaker else { return }
         let inUse = AudioDevices.isOutputInUse(spk.id)
         if inUse && !speakerActive {
+            if selectedOutput == nil { refreshDevices() }  // device vanished — fall back
             guard let realOut = selectedOutput,
                   let tap = speakerTap, realOut.id != tap.id else { return }
-            do {
-                try speakerEngine.start(inputDevice: tap, outputDevice: realOut,
-                                        bypass: !speakerEnabled)
-                speakerActive = true
-            } catch {
-                speakerActive = false
-                NSLog("ODE: speaker engine failed: \(error.localizedDescription)")
+            speakerActive = true  // optimistic; cleared if start fails
+            let bypass = !speakerEnabled
+            engineQueue.async { [weak self, speakerEngine] in
+                do {
+                    try speakerEngine.start(inputDevice: tap, outputDevice: realOut,
+                                            bypass: bypass)
+                } catch {
+                    NSLog("ODE: speaker engine failed: \(error.localizedDescription)")
+                    DispatchQueue.main.async { self?.speakerActive = false }
+                }
             }
         } else if !inUse && speakerActive {
-            speakerEngine.stop(); speakerActive = false
+            speakerActive = false
+            engineQueue.async { [speakerEngine] in speakerEngine.stop() }
         } else if speakerActive {
             speakerEngine.bypassDenoise = !speakerEnabled
         }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AVFoundation
 import ODEKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -10,6 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notesController: MeetingNotesWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Ask for microphone consent up front. If the TCC prompt instead fires
+        // mid-call inside a CoreAudio property call, it blocks that call — and
+        // with it whatever thread the engine was started from.
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                if !granted { NSLog("ODE: microphone access denied") }
+            }
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             updateIcon()

@@ -29,6 +29,13 @@ func usage() {
           Without --out, monitors to the default output (use headphones).
           Press Ctrl-C to stop.
 
+      ode fakecall --play <audio.wav> [--record <mic-out.wav>] [--seconds N]
+          Impersonate a conferencing app: read from "ODE Microphone" and play
+          the file into "ODE Speaker". Activates both denoise paths — and
+          transcription, if enabled — exactly like a real call. With --record,
+          saves what a call app would hear from you and reports audio glitches.
+          Requires ODE.app to be running.
+
     EXAMPLES:
       ode file noisy.wav clean.wav
       ode mic 8 raw.wav clean.wav
@@ -164,6 +171,103 @@ case "watch":
     }
     if obs == nil { print("  (failed to install observer)") }
     dispatchMain()
+
+case "fakecall":
+    // Impersonate a conferencing app so the whole ODE pipeline runs without a
+    // real meeting: an input client on "ODE Microphone" (mic path activates)
+    // and playback into "ODE Speaker" (speaker path activates).
+    var playPath: String?
+    var recordPath: String?
+    var secondsArg: Double?
+    if let i = args.firstIndex(of: "--play"), i + 1 < args.count { playPath = args[i + 1] }
+    if let i = args.firstIndex(of: "--record"), i + 1 < args.count { recordPath = args[i + 1] }
+    if let i = args.firstIndex(of: "--seconds"), i + 1 < args.count { secondsArg = Double(args[i + 1]) }
+    guard let playPath else {
+        print("usage: ode fakecall --play <audio.wav> [--record <mic-out.wav>] [--seconds N]")
+        exit(1)
+    }
+
+    // The visible devices only exist while ODE.app is running (they're hidden
+    // otherwise), which is exactly what we want to verify.
+    let visible = AudioDevices.all()
+    guard let mic = visible.first(where: { $0.name.localizedCaseInsensitiveContains("ode microphone") }),
+          let spk = visible.first(where: { $0.name.localizedCaseInsensitiveContains("ode speaker") }) else {
+        print("ODE Microphone / ODE Speaker not found — is ODE.app running? (Devices are hidden while it isn't.)")
+        exit(1)
+    }
+
+    func pinDevice(_ unit: AudioUnit?, _ id: AudioDeviceID) {
+        guard let unit else { return }
+        var dev = id
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                             kAudioUnitScope_Global, 0, &dev,
+                             UInt32(MemoryLayout<AudioDeviceID>.size))
+    }
+
+    do {
+        // --- Input client on ODE Microphone (what Zoom would hear from you) ---
+        let capture = AVAudioEngine()
+        pinDevice(capture.inputNode.audioUnit, mic.id)
+        let inFmt = capture.inputNode.inputFormat(forBus: 0)
+        guard inFmt.sampleRate > 0 else {
+            print("ODE Microphone has no valid format."); exit(1)
+        }
+        var recFile: AVAudioFile?
+        if let recordPath {
+            recFile = try AVAudioFile(forWriting: URL(fileURLWithPath: recordPath),
+                                      settings: inFmt.settings)
+        }
+        // Glitch detector: abrupt sample-to-sample jumps are buffer skips/pops,
+        // not speech (speech slew at 48 kHz is far smaller).
+        var glitches = 0
+        var capturedFrames: AVAudioFramePosition = 0
+        var lastSample: Float = 0
+        capture.inputNode.installTap(onBus: 0, bufferSize: 4_800, format: inFmt) { buf, _ in
+            capturedFrames += AVAudioFramePosition(buf.frameLength)
+            try? recFile?.write(from: buf)
+            if let ch = buf.floatChannelData?[0] {
+                for i in 0..<Int(buf.frameLength) {
+                    if abs(ch[i] - lastSample) > 0.5 { glitches += 1 }
+                    lastSample = ch[i]
+                }
+            }
+        }
+        try capture.start()
+        print("▶ Reading ODE Microphone (\(mic.name))")
+
+        // --- Playback client into ODE Speaker (the "incoming call audio") ---
+        let playback = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        playback.attach(player)
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: playPath))
+        playback.connect(player, to: playback.mainMixerNode, format: file.processingFormat)
+        pinDevice(playback.outputNode.audioUnit, spk.id)
+        try playback.start()
+        player.scheduleFile(file, at: nil)
+        player.play()
+        let fileSeconds = Double(file.length) / file.processingFormat.sampleRate
+        print("▶ Playing \(playPath) into ODE Speaker (\(String(format: "%.1f", fileSeconds))s)")
+
+        let duration = secondsArg ?? (fileSeconds + 2)
+        print("Simulated call running for \(String(format: "%.1f", duration))s…")
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            player.stop()
+            playback.stop()
+            capture.inputNode.removeTap(onBus: 0)
+            capture.stop()
+            let secs = Double(capturedFrames) / inFmt.sampleRate
+            print("✓ Call ended. Captured \(String(format: "%.1f", secs))s from ODE Microphone.")
+            print(glitches == 0
+                  ? "✓ No audio glitches detected on the mic path."
+                  : "⚠ \(glitches) abrupt discontinuities detected (possible pops).")
+            if let recordPath { print("Mic-path recording: \(recordPath)") }
+            exit(0)
+        }
+        dispatchMain()
+    } catch {
+        print("fakecall error: \(error.localizedDescription)")
+        exit(1)
+    }
 
 case "transcribe":
     // Debug: transcribe an audio file and print timestamped segments.
