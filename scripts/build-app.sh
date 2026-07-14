@@ -28,8 +28,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>            <string>ODE</string>
     <key>CFBundleDisplayName</key>     <string>ODE</string>
     <key>CFBundleIdentifier</key>      <string>com.ode.app</string>
-    <key>CFBundleVersion</key>         <string>0.3.0</string>
-    <key>CFBundleShortVersionString</key><string>0.3.0</string>
+    <key>CFBundleVersion</key>         <string>0.4.0</string>
+    <key>CFBundleShortVersionString</key><string>0.4.0</string>
     <key>CFBundleExecutable</key>      <string>ODE</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
