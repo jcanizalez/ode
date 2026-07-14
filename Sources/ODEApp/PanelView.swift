@@ -185,6 +185,17 @@ struct PanelView: View {
                         }
                     }
                 }
+                Divider()
+                Button {
+                    controller.toggleDetectSpeakers()
+                } label: {
+                    HStack {
+                        Text("Detect speakers")
+                        if controller.detectSpeakers {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
             } label: {
                 Text(controller.asrEngine.displayName)
                     .font(.system(size: 10, weight: .semibold))

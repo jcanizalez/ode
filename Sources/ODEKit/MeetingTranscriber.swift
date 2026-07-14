@@ -8,13 +8,14 @@ import AVFoundation
 public final class MeetingTranscriber {
     private let you: any SpeechTranscribing
     private let others: any SpeechTranscribing
+    private let diarizer: SpeakerDiarizer?
     private let lock = NSLock()
     private var segments: [TranscriptSegment] = []
     private var liveChat: [ChatMessage] = []
     private var startedAt = Date()
     private var running = false
 
-    public init(engine: TranscriptionEngine = .apple) {
+    public init(engine: TranscriptionEngine = .apple, detectSpeakers: Bool = false) {
         switch engine {
         case .apple:
             you = StreamTranscriber()
@@ -23,13 +24,17 @@ public final class MeetingTranscriber {
             you = ParakeetStreamTranscriber()
             others = ParakeetStreamTranscriber()
         }
+        // Diarize the incoming audio to sub-label "Others" as "Speaker 1/2/…".
+        diarizer = detectSpeakers ? SpeakerDiarizer() : nil
     }
 
-    public static func ensureModel(engine: TranscriptionEngine = .apple) async throws {
+    public static func ensureModel(engine: TranscriptionEngine = .apple,
+                                   detectSpeakers: Bool = false) async throws {
         switch engine {
         case .apple: try await StreamTranscriber.ensureModel()
         case .parakeet: try await ParakeetStreamTranscriber.ensureModel()
         }
+        if detectSpeakers { try await SpeakerDiarizer.ensureModel() }
     }
 
     /// Begin a session. Wire `feedMic`/`feedOthers` to the engine audio taps.
@@ -41,6 +46,13 @@ public final class MeetingTranscriber {
         others.onSegment = { [weak self] seg in self?.add("Others", seg) }
         try await you.start()
         try await others.start()
+        // Diarization is additive — if its model fails to load, the meeting
+        // still transcribes with plain "Others" labels.
+        if let diarizer {
+            do { try await diarizer.start() } catch {
+                NSLog("ODE: speaker detection unavailable: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func add(_ speaker: String, _ seg: SpeechSegment) {
@@ -48,9 +60,17 @@ public final class MeetingTranscriber {
         // The transcriber's times are relative to its own stream start, which is
         // the meeting start, so use them directly; fall back to wall-clock.
         let start = seg.start > 0 ? seg.start : elapsedBase
+        let end = max(seg.end, start)
+        // Sub-label remote speech with the dominant diarized speaker. Only
+        // trust it when the segment has real engine timing (start > 0).
+        var speaker = speaker
+        if speaker == "Others", seg.start > 0, seg.end > seg.start,
+           let label = diarizer?.speakerLabel(from: seg.start, to: seg.end) {
+            speaker = label
+        }
         lock.lock()
         segments.append(TranscriptSegment(speaker: speaker, start: start,
-                                          end: max(seg.end, start), text: seg.text))
+                                          end: end, text: seg.text))
         lock.unlock()
     }
 
@@ -86,6 +106,7 @@ public final class MeetingTranscriber {
     public func feedOthers(_ buffer: AVAudioPCMBuffer) {
         guard running else { return }
         others.append(buffer)
+        diarizer?.append(buffer)
     }
 
     /// Finish, build, and persist the transcript. Returns it (or nil if empty).
@@ -94,6 +115,7 @@ public final class MeetingTranscriber {
         lock.lock(); running = false; lock.unlock()
         await you.finish()
         await others.finish()
+        diarizer?.finish()
 
         lock.lock(); let segs = segments; let chat = liveChat; lock.unlock()
         guard !segs.isEmpty else { return nil }

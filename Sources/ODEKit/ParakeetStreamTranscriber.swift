@@ -21,10 +21,15 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
     private var intake: AsyncStream<AVAudioPCMBuffer>.Continuation?
     private var converter: AVAudioConverter?
 
-    /// Guards `emittedText`: confirmed-update handling and the final flush
-    /// can race, and segments must never be emitted twice.
+    /// Guards `emittedText`/`pendingRange`: confirmed-update handling and the
+    /// final flush can race, and segments must never be emitted twice.
     private let emitLock = NSLock()
     private var emittedText = ""
+    /// Stream-time span (seconds) of the last hypothesis — token timings are
+    /// globalized to the full audio timeline by the sliding-window manager.
+    /// When a hypothesis is confirmed, this span timestamps the emitted
+    /// segment (needed for transcript ordering and speaker diarization).
+    private var pendingRange: (start: TimeInterval, end: TimeInterval)?
 
     /// Parakeet consumes 16 kHz mono float.
     private static let feedFormat = AVAudioFormat(
@@ -93,12 +98,21 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
 
         // Segments: whenever a window is confirmed, emit the newly confirmed
         // tail of the transcript. (Confirmed text is stable; volatile text may
-        // still be revised, so it is only flushed at finish.)
+        // still be revised, so it is only flushed at finish.) The confirmed
+        // text is the *previous* hypothesis, so its timestamp span is the one
+        // recorded before this update; the current update's span is stored
+        // for the next confirmation.
         let updates = await manager.transcriptionUpdates
         updatesTask = Task { [weak self] in
-            for await update in updates where update.isConfirmed {
+            for await update in updates {
                 guard let self, let manager = self.manager else { return }
-                self.emitDelta(upTo: await manager.confirmedTranscript)
+                let span = Self.span(of: update.tokenTimings)
+                if update.isConfirmed {
+                    self.emitDelta(upTo: await manager.confirmedTranscript)
+                }
+                self.emitLock.lock()
+                if let span { self.pendingRange = span }
+                self.emitLock.unlock()
             }
         }
 
@@ -162,7 +176,13 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
     private func resetEmitted() {
         emitLock.lock()
         emittedText = ""
+        pendingRange = nil
         emitLock.unlock()
+    }
+
+    private static func span(of timings: [TokenTiming]) -> (TimeInterval, TimeInterval)? {
+        guard let first = timings.first, let last = timings.last else { return nil }
+        return (first.startTime, max(last.endTime, first.startTime))
     }
 
     /// Emit whatever part of `text` (a cumulative transcript snapshot) hasn't
@@ -187,9 +207,12 @@ public final class ParakeetStreamTranscriber: SpeechTranscribing {
             delta = text.trimmingCharacters(in: .whitespacesAndNewlines)
             emittedText += (emittedText.isEmpty ? "" : " ") + text
         }
+        let range = pendingRange
         emitLock.unlock()
 
         guard !delta.isEmpty else { return }
-        onSegment?(SpeechSegment(start: 0, end: 0, text: delta))
+        onSegment?(SpeechSegment(start: range?.start ?? 0,
+                                 end: range?.end ?? 0,
+                                 text: delta))
     }
 }

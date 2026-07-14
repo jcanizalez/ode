@@ -32,7 +32,9 @@ final class ODEController: ObservableObject {
     @Published var transcribeEnabled = false
     @Published var transcribing = false
     @Published var asrEngine: TranscriptionEngine = .apple
-    /// 0...1 while the Parakeet model is downloading, nil otherwise.
+    /// Sub-label remote participants as "Speaker 1/2/…" via diarization.
+    @Published var detectSpeakers = false
+    /// 0...1 while an AI model is downloading, nil otherwise.
     @Published var modelDownloadProgress: Double?
 
     // Live audio levels (0...1) for the meters.
@@ -58,6 +60,7 @@ final class ODEController: ObservableObject {
         transcribeEnabled = d.object(forKey: Keys.transcribeEnabled) as? Bool ?? false
         asrEngine = d.string(forKey: Keys.asrEngine)
             .flatMap(TranscriptionEngine.init(rawValue:)) ?? .apple
+        detectSpeakers = d.object(forKey: Keys.detectSpeakers) as? Bool ?? false
 
         // The virtual devices are hidden while ODE isn't running, so users
         // never see a dead device in pickers. Show them now, and keep pinging
@@ -104,6 +107,7 @@ final class ODEController: ObservableObject {
         static let speakerEnabled = "ode.speakerEnabled"
         static let transcribeEnabled = "ode.transcribeEnabled"
         static let asrEngine = "ode.asrEngine"
+        static let detectSpeakers = "ode.detectSpeakers"
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
     }
@@ -114,6 +118,7 @@ final class ODEController: ObservableObject {
         d.set(speakerEnabled, forKey: Keys.speakerEnabled)
         d.set(transcribeEnabled, forKey: Keys.transcribeEnabled)
         d.set(asrEngine.rawValue, forKey: Keys.asrEngine)
+        d.set(detectSpeakers, forKey: Keys.detectSpeakers)
         if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
         if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
     }
@@ -321,15 +326,32 @@ final class ODEController: ObservableObject {
         if engine == .parakeet { prefetchParakeetModel() }
     }
 
+    /// Toggle "Speaker 1/2/…" sub-labels for remote participants. Applies to
+    /// the next transcription session; prefetches the diarization model.
+    func toggleDetectSpeakers() {
+        detectSpeakers.toggle()
+        persistSettings()
+        if detectSpeakers {
+            prefetchModel { try await SpeakerDiarizer.ensureModel(progress: $0) }
+        }
+    }
+
     /// Download the Parakeet model in the background the moment the user picks
     /// the engine, with visible progress — instead of stalling silently at the
     /// start of their first transcribed meeting.
     private func prefetchParakeetModel() {
-        guard !ParakeetStreamTranscriber.modelIsCached, modelDownloadProgress == nil else { return }
+        guard !ParakeetStreamTranscriber.modelIsCached else { return }
+        prefetchModel { try await ParakeetStreamTranscriber.ensureModel(progress: $0) }
+    }
+
+    private func prefetchModel(
+        _ ensure: @escaping (@escaping @Sendable (Double) -> Void) async throws -> Void
+    ) {
+        guard modelDownloadProgress == nil else { return }
         modelDownloadProgress = 0
         Task {
             do {
-                try await ParakeetStreamTranscriber.ensureModel { fraction in
+                try await ensure { fraction in
                     DispatchQueue.main.async { [weak self] in
                         // ensureModel also reports model-compile progress on
                         // later runs; only surface it while actually fetching.
@@ -339,7 +361,7 @@ final class ODEController: ObservableObject {
                     }
                 }
             } catch {
-                NSLog("ODE: Parakeet model download failed: \(error.localizedDescription)")
+                NSLog("ODE: model download failed: \(error.localizedDescription)")
             }
             await MainActor.run { self.modelDownloadProgress = nil }
         }
@@ -468,7 +490,8 @@ final class ODEController: ObservableObject {
     @available(macOS 26.0, *)
     private func startTranscription() {
         let engine = asrEngine
-        let mt = MeetingTranscriber(engine: engine)
+        let diarize = detectSpeakers
+        let mt = MeetingTranscriber(engine: engine, detectSpeakers: diarize)
         meetingTranscriber = mt
         transcribing = true
 
@@ -478,7 +501,7 @@ final class ODEController: ObservableObject {
 
         Task {
             do {
-                try await MeetingTranscriber.ensureModel(engine: engine)
+                try await MeetingTranscriber.ensureModel(engine: engine, detectSpeakers: diarize)
                 try await mt.start()
             } catch {
                 NSLog("ODE: transcription start failed: \(error.localizedDescription)")

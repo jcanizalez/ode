@@ -169,13 +169,14 @@ case "transcribe":
     // Debug: transcribe an audio file and print timestamped segments.
     // --engine picks the speech-to-text engine (default: apple).
     guard args.count >= 3 else {
-        print("usage: ode transcribe <audio.wav> [--engine apple|parakeet]"); exit(1)
+        print("usage: ode transcribe <audio.wav> [--engine apple|parakeet] [--diarize]"); exit(1)
     }
     let url = URL(fileURLWithPath: args[2])
     var engineChoice = "apple"
     if let idx = args.firstIndex(of: "--engine"), idx + 1 < args.count {
         engineChoice = args[idx + 1]
     }
+    let diarize = args.contains("--diarize")
     let sema = DispatchSemaphore(value: 0)
     Task {
         do {
@@ -197,8 +198,21 @@ case "transcribe":
                 print("Unknown engine '\(engineChoice)' (use apple or parakeet)")
                 exit(1)
             }
+            var dz: SpeakerDiarizer?
+            if diarize {
+                print("Ensuring diarization model (first run downloads the weights)…")
+                try await SpeakerDiarizer.ensureModel()
+                let d = SpeakerDiarizer()
+                try await d.start()
+                dz = d
+            }
             t.onSegment = { seg in
-                print(String(format: "[%6.2f–%6.2f] %@", seg.start, seg.end, seg.text))
+                var label = ""
+                if let dz, seg.end > seg.start,
+                   let spk = dz.speakerLabel(from: seg.start, to: seg.end) {
+                    label = " \(spk):"
+                }
+                print(String(format: "[%6.2f–%6.2f]%@ %@", seg.start, seg.end, label, seg.text))
             }
             try await t.start()
             // Feed in ~1 s chunks to exercise the streaming path. (Guard on
@@ -211,7 +225,9 @@ case "transcribe":
                 try file.read(into: buf, frameCount: chunkFrames)
                 if buf.frameLength == 0 { break }
                 t.append(buf)
+                dz?.append(buf)
             }
+            dz?.finish()
             await t.finish()
             print("--- done ---")
         } catch {
