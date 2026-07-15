@@ -36,36 +36,56 @@ leaving the Mac.
   engine-stats log) — see `docs/TESTING.md`
 - Developer ID signed, notarized, one-command releases via GitHub Actions
 
-## Backlog (rough priority)
+## Release plan — the next odes
 
-1. **Live translated captions** (v0.10.0) — Apple's on-device Translation
-   framework over the live segment stream (es⇄en first). Real-time
-   interpretation without the cloud.
-2. **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`
-   (already in our FluidAudio dependency): "Javier:" instead of "Speaker 1:".
-3. **Studio Voice** — pro-mic DSP chain on the mic path (high-pass, warmth
-   shelf, presence boost, compressor, limiter via Apple AUs). Most of the
-   perceived "podcast voice" difference is EQ + dynamics, not AI.
-4. **Liquid-Glass layered .icon** — hand-authored layers compiled via actool
-   (Assets.car + CFBundleIconName), keeping the .icns fallback.
-5. **Auto-updates** — Sparkle fed by an appcast generated from our GitHub
-   releases; ends the manual pkg-download loop.
-6. **Spanish UI localization** — the app answers in Spanish; its UI should too.
-7. **Cross-meeting Q&A** — ask across the whole transcript store ("what did
-   we decide about mTLS, ever?"), not just one meeting.
-8. **Action-item export** — owners' tasks to Reminders / Markdown clipboard.
-9. **Microsoft Graph calendar connector** — opt-in titles/attendees when
-   Outlook isn't synced to macOS Calendar (OAuth; metadata only).
-10. **Speaking analytics** — fillers/WPM/monologues from stored transcripts.
-11. **Call recording** — optionally keep denoised audio next to transcripts.
-12. **Map-reduce notes** — chapter-quality summaries for 2-hour meetings.
-13. **Global hotkey** — toggle noise cancellation without opening the panel.
-14. **Background voice cancellation** — suppress *other people's voices* near
-   you while keeping yours. Needs personalized speech extraction with a voice
-   enrollment; ambitious, model-dependent, treat as an experiment.
-15. **Accent conversion / speech-to-speech translation** — real-time
-   generative speech is not yet practical on-device. Revisit as ANE-native
-   speech models mature.
+Each release is a themed verse; infra rides along where it fits.
+
+### v0.9.1 — *An Ode to Care* (small, infrastructure)
+- **Auto-updates** (Sparkle + appcast from GitHub releases) — every release
+  after this one delivers itself.
+- **Invisible windows** (`NSWindow.sharingType = .none`) — ODE never appears
+  in screen shares.
+- **Global hotkey** to toggle noise cancellation.
+- **Liquid-Glass layered .icon** via actool (icns fallback kept).
+
+### v0.10.0 — *An Ode to Tongues* (languages)
+- **Live translated captions** — Apple's on-device Translation over the live
+  segment stream (es⇄en first). Real-time interpretation without the cloud.
+- **Spanish UI localization** — the release about language, in two languages.
+- **Map-reduce notes** — chapter-quality summaries for 2-hour meetings.
+
+### v0.11.0 — *An Ode to Presence* (proactive, part 1)
+- **Name-mention alerts** — someone says your name → notification with the
+  sentence + one-click into the live view (mentions plumbing already exists).
+- **Suggested answers** — a question lands on you → the live view drafts a
+  reply from meeting context, on-device.
+
+### v0.12.0 — *An Ode to Counsel* (proactive, part 2)
+- **Screen context** — ScreenCaptureKit + Apple Vision OCR (fully local) so
+  Ask grounds answers in what's on screen, not just what was said.
+- **Claude escalation** — explicit "Ask with Claude" for hard questions:
+  question + minimal context to the Claude API, per-question, clearly
+  badged, never automatic. On-device remains the default.
+
+### v0.13.0 — *An Ode to Names* (knowledge)
+- **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`:
+  "Javier:" instead of "Speaker 1:".
+- **Cross-meeting Q&A** — ask across the whole transcript store.
+- **Action-item export** — owners' tasks to Reminders / Markdown clipboard.
+- **Microsoft Graph calendar connector** (opt-in) for Outlook-only setups.
+
+### v0.14.0 — *An Ode to Craft* (the voice itself)
+- **Studio Voice** — pro-mic DSP chain (high-pass, warmth, presence,
+  compressor, limiter). Most of "podcast voice" is EQ + dynamics, not AI.
+- **Call recording** — optionally keep denoised audio next to transcripts.
+- **Speaking analytics** — fillers/WPM/monologues from stored transcripts.
+
+### v1.0.0 — *An Ode to Voice* (the milestone)
+Everything above proven in daily use, plus whichever research item matured:
+- **Background voice cancellation** — suppress other people's voices near
+  you (personalized speech extraction; ambitious).
+- **Accent conversion / speech-to-speech translation** — revisit as
+  ANE-native generative speech models mature.
 
 ## Proactive ODE (Glass-inspired)
 
