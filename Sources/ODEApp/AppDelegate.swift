@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = PanelView(
             controller: controller,
             onTest: { [weak self] in self?.openABTest() },
-            onNotes: { [weak self] in self?.openNotes() },
+            onNotes: { [weak self] showLive in self?.openNotes(showLive: showLive) },
             onQuit: { [weak self] in self?.quit() }
         )
         let hosting = NSHostingController(rootView: panel)
@@ -86,17 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private var iconActive: Bool?
+
     private func updateIcon() {
         guard let button = statusItem.button else { return }
         let denoising = (controller.micActive && controller.micEnabled)
             || (controller.speakerActive && controller.speakerEnabled)
-        let symbol = denoising ? "waveform.circle.fill" : "waveform.circle"
-        if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "ODE") {
-            img.isTemplate = true
-            button.image = img
-        } else {
-            button.title = denoising ? "ODE•" : "ODE"
-        }
+        guard denoising != iconActive else { return }  // redraw only on change
+        iconActive = denoising
+        button.image = StatusIcon.image(active: denoising)
     }
 
     // MARK: - Actions
@@ -111,11 +109,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         abController?.window?.makeKeyAndOrderFront(nil)
     }
 
-    private func openNotes() {
+    private func openNotes(showLive: Bool = false) {
         popover.performClose(nil)
+        controller.markMeetingsOpened()
         // Recreate so the list reflects newly saved transcripts. The controller
         // reference powers the live-meeting view (transcript-so-far + Q&A).
-        notesController = MeetingNotesWindowController(controller: controller)
+        notesController = MeetingNotesWindowController(controller: controller,
+                                                       showLive: showLive)
         NSApp.activate(ignoringOtherApps: true)
         notesController?.showWindow(nil)
         notesController?.window?.makeKeyAndOrderFront(nil)

@@ -14,7 +14,7 @@ XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
-ODE_VERSION="${ODE_VERSION:-0.8.0}"
+ODE_VERSION="${ODE_VERSION:-0.9.0}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp
@@ -24,6 +24,12 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
 cp ".build/release/ODEApp" "$MACOS/ODE"
 cp "Resources/dpdfnet2_48khz_hr.onnx" "$RES/"
+
+# App icon — rendered from code (scripts/make-icon.swift).
+ICONSET="$(mktemp -d)/ODE.iconset"
+swift scripts/make-icon.swift "$ICONSET" >/dev/null
+iconutil -c icns "$ICONSET" -o "$RES/ODE.icns"
+rm -rf "$(dirname "$ICONSET")"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,6 +43,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key>         <string>__ODE_VERSION__</string>
     <key>CFBundleShortVersionString</key><string>__ODE_VERSION__</string>
     <key>CFBundleExecutable</key>      <string>ODE</string>
+    <key>CFBundleIconFile</key>        <string>ODE</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>LSUIElement</key>             <true/>

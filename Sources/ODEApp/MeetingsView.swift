@@ -42,10 +42,10 @@ struct MeetingsView: View {
     @State private var confirmDelete = false
     @State private var renameTarget: String?
     @State private var renameText = ""
-    @State private var userName = UserDefaults.standard.string(forKey: "ode.userName") ?? ""
 
-    init(controller: ODEController? = nil) {
-        _model = StateObject(wrappedValue: MeetingsModel(controller: controller))
+    init(controller: ODEController? = nil, showLive: Bool = false) {
+        _model = StateObject(wrappedValue: MeetingsModel(controller: controller,
+                                                         startOnLive: showLive))
     }
 
     var body: some View {
@@ -116,19 +116,6 @@ struct MeetingsView: View {
                 .padding(.bottom, 12)
             }
 
-            // "Mentions of you" needs your name; defaults to your macOS
-            // account name, override here.
-            HStack(spacing: 7) {
-                Image(systemName: "person.crop.circle")
-                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.4))
-                TextField("Your name (\(NSFullUserName()))", text: $userName)
-                    .textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(.white)
-                    .onSubmit {
-                        UserDefaults.standard.set(userName, forKey: "ode.userName")
-                    }
-            }
-            .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(Color.white.opacity(0.04))
         }
         .background(Color(white: 0.09))
     }
@@ -771,7 +758,7 @@ struct MeetingsView: View {
 
 /// Hosts the Meetings view in a window.
 final class MeetingNotesWindowController: NSWindowController {
-    init(controller: ODEController? = nil) {
+    init(controller: ODEController? = nil, showLive: Bool = false) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -779,7 +766,8 @@ final class MeetingNotesWindowController: NSWindowController {
         window.title = "ODE — Meetings"
         window.center()
         super.init(window: window)
-        window.contentView = NSHostingView(rootView: MeetingsView(controller: controller))
+        window.contentView = NSHostingView(
+            rootView: MeetingsView(controller: controller, showLive: showLive))
     }
     required init?(coder: NSCoder) { fatalError() }
 }

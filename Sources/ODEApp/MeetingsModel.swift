@@ -42,8 +42,13 @@ final class MeetingsModel: ObservableObject {
 
     private var storeObserver: NSObjectProtocol?
 
-    init(controller: ODEController? = nil) {
+    /// When true, select the live meeting as soon as one exists (panel's
+    /// "Meeting in progress" row jumps straight to live notes).
+    private var startOnLive: Bool
+
+    init(controller: ODEController? = nil, startOnLive: Bool = false) {
         self.controller = controller
+        self.startOnLive = startOnLive
         // Poll the in-progress transcript; segments arrive every few seconds
         // during a call, so a 3 s refresh feels live without wasted work.
         liveTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
@@ -68,6 +73,10 @@ final class MeetingsModel: ObservableObject {
         let snapshot = controller?.liveMeeting
         let ended = (live != nil && snapshot == nil)
         live = snapshot
+        if startOnLive, snapshot != nil {
+            viewingLive = true
+            startOnLive = false
+        }
         if ended {
             // Meeting just finished: it's being saved — show it in the list.
             if viewingLive { viewingLive = false }

@@ -10,6 +10,15 @@ public enum AudioDevices {
         public let hasInput: Bool
         public let hasOutput: Bool
         public let isHidden: Bool
+        public let transportType: UInt32
+
+        /// System plumbing rather than pickable hardware: aggregates (created
+        /// by voice processing — "VPAUAggregateAudioDevice",
+        /// "CADefaultDeviceAggregate") and virtual/loopback devices.
+        public var isSystemPlumbing: Bool {
+            transportType == kAudioDeviceTransportTypeAggregate
+                || transportType == kAudioDeviceTransportTypeVirtual
+        }
     }
 
     public static func all() -> [Device] {
@@ -33,7 +42,21 @@ public enum AudioDevices {
                name: stringProp(id, kAudioObjectPropertyName) ?? "Unknown",
                hasInput: channelCount(id, scope: kAudioObjectPropertyScopeInput) > 0,
                hasOutput: channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0,
-               isHidden: isDeviceHidden(id))
+               isHidden: isDeviceHidden(id),
+               transportType: uint32Prop(id, kAudioDevicePropertyTransportType) ?? 0)
+    }
+
+    private static func uint32Prop(_ id: AudioDeviceID,
+                                   _ selector: AudioObjectPropertySelector) -> UInt32? {
+        var addr = AudioObjectPropertyAddress(mSelector: selector,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr else {
+            return nil
+        }
+        return value
     }
 
     private static func isDeviceHidden(_ id: AudioDeviceID) -> Bool {

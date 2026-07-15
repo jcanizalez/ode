@@ -309,7 +309,12 @@ final class ODEController: ObservableObject {
     // MARK: - Device lists
 
     func refreshDevices() {
-        let all = AudioDevices.all().filter { !$0.isHidden && !isLoopback($0) }
+        // Real hardware only: no hidden devices, no ODE/loopback drivers, and
+        // no system plumbing (voice-processing aggregates, virtual devices
+        // like "Microsoft Teams Audio").
+        let all = AudioDevices.all().filter {
+            !$0.isHidden && !isLoopback($0) && !$0.isSystemPlumbing
+        }
         inputDevices = all.filter { $0.hasInput }
         outputDevices = all.filter { $0.hasOutput }
         if selectedInputID == nil || !inputDevices.contains(where: { $0.id == selectedInputID }) {
@@ -555,6 +560,20 @@ final class ODEController: ObservableObject {
             await mt.finishAndSave()
             completion()
         }
+    }
+
+    // MARK: - Meetings badge
+
+    /// Meetings saved since the user last opened the Meetings window —
+    /// the panel's "you have new notes" badge. Cleared by markMeetingsOpened.
+    func newMeetingsCount() -> Int {
+        let last = UserDefaults.standard.object(forKey: "ode.meetingsLastOpened") as? Date
+            ?? .distantPast
+        return TranscriptStore.shared.load().filter { $0.endedAt > last }.count
+    }
+
+    func markMeetingsOpened() {
+        UserDefaults.standard.set(Date(), forKey: "ode.meetingsLastOpened")
     }
 
     // MARK: - Live meeting access
