@@ -60,6 +60,8 @@ Each release is a themed verse; infra rides along where it fits.
   segment stream (es⇄en first). Real-time interpretation without the cloud.
 - **Spanish UI localization** — the release about language, in two languages.
 - **Map-reduce notes** — chapter-quality summaries for 2-hour meetings.
+- Polish: gear moves from the popover footer to the header (beside the
+  master toggle); power stays in the footer next to Test.
 
 ### v0.12.0 — *An Ode to Presence* (proactive, part 1)
 - **Name-mention alerts** — someone says your name → notification with the
