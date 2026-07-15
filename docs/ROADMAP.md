@@ -60,6 +60,12 @@ leaving the Mac.
 11. **Call recording** — optionally keep denoised audio next to transcripts.
 12. **Map-reduce notes** — chapter-quality summaries for 2-hour meetings.
 13. **Global hotkey** — toggle noise cancellation without opening the panel.
+14. **Background voice cancellation** — suppress *other people's voices* near
+   you while keeping yours. Needs personalized speech extraction with a voice
+   enrollment; ambitious, model-dependent, treat as an experiment.
+15. **Accent conversion / speech-to-speech translation** — real-time
+   generative speech is not yet practical on-device. Revisit as ANE-native
+   speech models mature.
 
 ## Proactive ODE (Glass-inspired)
 
@@ -79,9 +85,3 @@ on-device by default, cloud only by explicit opt-in.
   deep reasoning; clearly indicated, per-question, never automatic.
 - **Invisible windows** — NSWindow.sharingType = .none so ODE's panels never
   appear in screen shares or recordings (one-liner, do it early).
-6. **Background voice cancellation** — suppress *other people's voices* near
-   you while keeping yours. Needs personalized speech extraction with a voice
-   enrollment; ambitious, model-dependent, treat as an experiment.
-7. **Accent conversion / speech-to-speech translation** — real-time
-   generative speech is not yet practical on-device. Revisit as ANE-native
-   speech models mature.
