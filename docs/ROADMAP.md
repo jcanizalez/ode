@@ -55,6 +55,22 @@ Each release is a themed verse; infra rides along where it fits.
   panel responsiveness fixes.
 - Backlog: Liquid-Glass layered .icon via actool (icns fallback kept).
 
+### v0.10.1 — patch (the microphone's mea culpa)
+- **Fix dead mic** — echo cancellation (VPIO) has captured pure silence since
+  the 0.8.0 engine-lifecycle rework. It now defaults OFF (existing installs
+  migrated once) and is labeled experimental until the voice-processing path
+  is rebuilt. AirPods/headsets do their own AEC and lose nothing.
+- **"System Default" device option** — pickers gain a System Default entry
+  (the default): ODE follows the system input/output as it changes, so
+  connecting AirPods auto-switches like Krisp. Explicit device pinning stays
+  available.
+- **Silent-mic detection** — mic path active but capturing zeros for ~10 s →
+  orange panel warning naming the likely fix.
+- Backlog: **VPIO rearchitecture** — one persistent voice-processing capture
+  engine reused across sessions (fresh-engines-per-session conflicts with
+  VPIO: dormant instances silence capture, per-session activation storms the
+  device stack). Needs a dedicated harness with real-mic assertions.
+
 ### v0.11.0 — *An Ode to Tongues* (languages)
 - **Live translated captions** — Apple's on-device Translation over the live
   segment stream (es⇄en first). Real-time interpretation without the cloud.

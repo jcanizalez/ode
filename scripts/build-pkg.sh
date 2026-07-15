@@ -14,7 +14,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-VERSION="${ODE_VERSION:-0.10.0}"
+VERSION="${ODE_VERSION:-0.10.1}"
 IDENTIFIER="audio.ode.installer"
 DIST="dist"
 APP="$DIST/ODE.app"

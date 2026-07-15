@@ -209,8 +209,16 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             card {
                 settingRow(icon: "wave.3.up",
-                           hint: "Stops your mic from re-capturing what your speakers play, so the other side never hears themselves. When on, ODE uses the system default microphone.") {
-                    Text("Echo cancellation").rowLabelStyle()
+                           hint: "Experimental — currently unreliable and can leave your mic silent; leave off unless testing. Stops your mic from re-capturing speaker sound. AirPods and most headsets do their own echo cancellation, so they don't need this.") {
+                    HStack(spacing: 6) {
+                        Text("Echo cancellation").rowLabelStyle()
+                        Text("EXPERIMENTAL")
+                            .font(.system(size: 8, weight: .bold))
+                            .tracking(0.5)
+                            .foregroundStyle(.orange.opacity(0.9))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.orange.opacity(0.15)))
+                    }
                 } trailing: {
                     settingToggle(isOn: controller.echoCancelEnabled) { controller.toggleEchoCancel() }
                 }

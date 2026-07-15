@@ -211,21 +211,36 @@ public final class LiveEngine {
     /// the system output) is applied to the capture side of each session.
     public let voiceProcessing: Bool
 
-    /// Dormant engine that forces coreaudiod to stand up the voice-processing
-    /// machinery at CREATION time. The first VPIO activation reconfigures the
-    /// system's default-device stack — a storm that, when it happened at
-    /// session start, killed other apps' audio engines mid-call. Pre-warming
-    /// moves that storm to app launch, when nobody is on a call.
-    private var vpWarmup: AVAudioEngine?
-
     public init(voiceProcessing: Bool = false) {
         self.voiceProcessing = voiceProcessing
         if voiceProcessing {
-            let warmup = AVAudioEngine()
-            try? warmup.inputNode.setVoiceProcessingEnabled(true)
-            warmup.prepare()
-            vpWarmup = warmup
+            Self.warmUpVoiceProcessing()
         }
+    }
+
+    /// The first VPIO activation reconfigures the system's default-device
+    /// stack — a storm that, when it happened at session start, killed other
+    /// apps' audio engines mid-call. Run it once at engine creation (app
+    /// launch), when nobody is on a call.
+    ///
+    /// The warmup engine must be STARTED and then fully RELEASED: a
+    /// prepared-but-never-started VPIO instance held for the app's lifetime
+    /// leaves the voice-processing stack half-configured, and every real
+    /// session's capture reads silence (the 0.8.0–0.10.0 dead-mic bug).
+    private static var vpWarmedUp = false
+    private static func warmUpVoiceProcessing() {
+        guard !vpWarmedUp else { return }
+        vpWarmedUp = true
+        let warmup = AVAudioEngine()
+        do {
+            try warmup.inputNode.setVoiceProcessingEnabled(true)
+            // Starting (not just preparing) is what stands the stack up.
+            try warmup.start()
+        } catch {
+            diagnostic("[warmup] VPIO warmup failed: \(error.localizedDescription)")
+        }
+        warmup.stop()
+        // Engine goes out of scope: nothing dormant is left holding VPIO.
     }
 
     /// Optional sink for captured audio (post-resample, 48 kHz mono), used for
@@ -273,6 +288,12 @@ public final class LiveEngine {
     private var _sessionPeak: Float = 0
     public var currentLevel: Float {
         get { os_unfair_lock_lock(&levelLock); defer { os_unfair_lock_unlock(&levelLock) }; return _level }
+    }
+    /// Loudest input sample seen this session. Exactly 0 after seconds of a
+    /// running session means the capture is dead (permission, device) — even
+    /// a quiet room registers a noise floor.
+    public var sessionPeak: Float {
+        get { os_unfair_lock_lock(&levelLock); defer { os_unfair_lock_unlock(&levelLock) }; return _sessionPeak }
     }
     private func updateLevel(_ mono: [Float]) {
         guard !mono.isEmpty else { return }

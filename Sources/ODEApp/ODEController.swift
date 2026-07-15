@@ -30,7 +30,7 @@ final class ODEController: ObservableObject {
     /// without headphones, the mic otherwise re-captures whatever the
     /// speakers play — the remote side hears themselves and speaker audio
     /// bleeds into the "You" transcript.
-    @Published var echoCancelEnabled = true
+    @Published var echoCancelEnabled = false
     @Published var inputDevices: [AudioDevices.Device] = []
     @Published var selectedInputID: AudioDeviceID?
 
@@ -52,6 +52,10 @@ final class ODEController: ObservableObject {
     /// How much noise to remove, 0...1 (1 = everything; lower keeps voices
     /// more natural by blending the original signal back in).
     @Published var noiseStrength: Double = 1
+    /// Follow the system default input/output as it changes (AirPods connect
+    /// → ODE switches with the system), instead of pinning a device.
+    @Published var followSystemInput = true
+    @Published var followSystemOutput = true
     /// Whether ODE starts at login (mirrors SMAppService's real status).
     @Published var launchAtLogin = false
     /// 0...1 while an AI model is downloading, nil otherwise.
@@ -60,6 +64,10 @@ final class ODEController: ObservableObject {
     // Live audio levels (0...1) for the meters.
     @Published var micLevel: Float = 0
     @Published var othersLevel: Float = 0
+    /// Set when the mic path has been capturing for a while but has heard
+    /// literally nothing — dead capture (permission/device), never silence.
+    @Published var micSilentWarning: String?
+    private var micActiveSince: Date?
 
     /// Mic engine is recreated when echo cancellation toggles (voice
     /// processing is fixed at engine creation — see LiveEngine.voiceProcessing).
@@ -89,7 +97,15 @@ final class ODEController: ObservableObject {
             .flatMap(TranscriptionEngine.init(rawValue:)) ?? .apple
         detectSpeakers = d.object(forKey: Keys.detectSpeakers) as? Bool ?? false
         hideFromCapture = d.object(forKey: Keys.hideFromCapture) as? Bool ?? true
-        let aec = d.object(forKey: Keys.echoCancel) as? Bool ?? true
+        // Echo cancellation (VPIO) has captured pure silence since the 0.8.0
+        // engine-lifecycle rework — every EC-on session was a dead mic. Until
+        // the voice-processing path is rearchitected (persistent engine), it
+        // defaults OFF and existing installs are migrated off once.
+        if !d.bool(forKey: Keys.ecForcedOff) {
+            d.set(false, forKey: Keys.echoCancel)
+            d.set(true, forKey: Keys.ecForcedOff)
+        }
+        let aec = d.object(forKey: Keys.echoCancel) as? Bool ?? false
         echoCancelEnabled = aec
         micEngine = LiveEngine(voiceProcessing: aec)
 
@@ -99,14 +115,25 @@ final class ODEController: ObservableObject {
         showVirtualDevices()
         visibilityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.showVirtualDevices()
+            self?.healZombiePaths()
         }
 
         refreshDevices()
-        // Prefer a remembered device (by UID, since IDs change across reboots).
-        selectedInputID = rememberedDevice(uidKey: Keys.inputUID, in: inputDevices)?.id
-            ?? preferredInputDevice()?.id
-        selectedOutputID = rememberedDevice(uidKey: Keys.outputUID, in: outputDevices)?.id
-            ?? preferredOutputDevice()?.id
+        // Device mode: follow the system default (sentinel/absent UID, the
+        // default — auto-switches when AirPods connect) or a pinned device
+        // remembered by UID (IDs change across reboots).
+        let inUID = d.string(forKey: Keys.inputUID)
+        let outUID = d.string(forKey: Keys.outputUID)
+        followSystemInput = inUID == nil || inUID == Self.systemDefaultUID
+        followSystemOutput = outUID == nil || outUID == Self.systemDefaultUID
+        selectedInputID = followSystemInput
+            ? systemDefaultInput()?.id
+            : (rememberedDevice(uidKey: Keys.inputUID, in: inputDevices)?.id
+               ?? preferredInputDevice()?.id)
+        selectedOutputID = followSystemOutput
+            ? systemDefaultOutput()?.id
+            : (rememberedDevice(uidKey: Keys.outputUID, in: outputDevices)?.id
+               ?? preferredOutputDevice()?.id)
 
         micEngine.bypassDenoise = !micEnabled
         speakerEngine.bypassDenoise = !speakerEnabled
@@ -135,6 +162,29 @@ final class ODEController: ObservableObject {
             guard let self else { return }
             self.micLevel = self.micActive ? self.micEngine.currentLevel : 0
             self.othersLevel = self.speakerActive ? self.speakerEngine.currentLevel : 0
+            self.updateMicSilenceWarning()
+        }
+    }
+
+    /// A live mic session that has heard NOTHING for 10 s is broken — even a
+    /// silent room has a noise floor. Surface it instead of denoising zeros
+    /// while nobody on the call can hear the user.
+    private func updateMicSilenceWarning() {
+        guard micActive else {
+            micActiveSince = nil
+            if micSilentWarning != nil { micSilentWarning = nil }
+            return
+        }
+        if micActiveSince == nil { micActiveSince = Date() }
+        let deafFor = Date().timeIntervalSince(micActiveSince ?? Date())
+        if micEngine.sessionPeak == 0, deafFor > 10 {
+            if micSilentWarning == nil {
+                micSilentWarning = echoCancelEnabled
+                    ? "ODE can't hear your mic. Echo cancellation is experimental — try turning it off in Settings → Audio."
+                    : "ODE can't hear your mic. Check System Settings → Privacy & Security → Microphone, or pick another device."
+            }
+        } else if micEngine.sessionPeak > 0, micSilentWarning != nil {
+            micSilentWarning = nil
         }
     }
 
@@ -147,11 +197,15 @@ final class ODEController: ObservableObject {
         static let asrEngine = "ode.asrEngine"
         static let detectSpeakers = "ode.detectSpeakers"
         static let echoCancel = "ode.echoCancel"
+        static let ecForcedOff = "ode.echoCancelForcedOff.0101"
         static let hideFromCapture = "ode.hideFromCapture"
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
         static let noiseStrength = "ode.noiseStrength"
     }
+
+    /// Sentinel stored in place of a device UID when following the system default.
+    static let systemDefaultUID = "__system_default__"
 
     private func persistSettings() {
         let d = UserDefaults.standard
@@ -163,8 +217,16 @@ final class ODEController: ObservableObject {
         d.set(echoCancelEnabled, forKey: Keys.echoCancel)
         d.set(hideFromCapture, forKey: Keys.hideFromCapture)
         d.set(noiseStrength, forKey: Keys.noiseStrength)
-        if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
-        if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
+        if followSystemInput {
+            d.set(Self.systemDefaultUID, forKey: Keys.inputUID)
+        } else if let u = selectedInput?.uid {
+            d.set(u, forKey: Keys.inputUID)
+        }
+        if followSystemOutput {
+            d.set(Self.systemDefaultUID, forKey: Keys.outputUID)
+        } else if let u = selectedOutput?.uid {
+            d.set(u, forKey: Keys.outputUID)
+        }
     }
 
     private func rememberedDevice(uidKey: String, in list: [AudioDevices.Device]) -> AudioDevices.Device? {
@@ -225,9 +287,48 @@ final class ODEController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
+    /// Self-healing: a path marked active whose engine has died (e.g. after a
+    /// voice-processing device storm) previously stayed a silent zombie until
+    /// the next hardware event. Checked on the 5 s heartbeat so it always
+    /// recovers, event or no event.
+    private func healZombiePaths() {
+        var healed = false
+        if micActive && !micEngine.isHealthy {
+            micActive = false
+            engineQueue.async { [micEngine] in micEngine.stop() }
+            healed = true
+        }
+        if speakerActive && !speakerEngine.isHealthy {
+            speakerActive = false
+            engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+            healed = true
+        }
+        if healed {
+            LiveEngine.diagnostic("[watchdog] zombie path detected — reconciling")
+            reconcileMic()
+            reconcileSpeaker()
+        }
+    }
+
     private func handleHardwareChange() {
         refreshDevices()
         installObservers()
+        // Follow the system default where enabled: when it moved (AirPods
+        // connected, dock unplugged…), swing the path to the new device.
+        if followSystemInput, let def = systemDefaultInput()?.id, def != selectedInputID {
+            selectedInputID = def
+            if micActive {
+                micActive = false
+                engineQueue.async { [micEngine] in micEngine.stop() }
+            }
+        }
+        if followSystemOutput, let def = systemDefaultOutput()?.id, def != selectedOutputID {
+            selectedOutputID = def
+            if speakerActive {
+                speakerActive = false
+                engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+            }
+        }
         // If a path's engine died with the device change (or its device
         // vanished), stop it so reconcile can start it again cleanly.
         if micActive && !micEngine.isHealthy {
@@ -315,6 +416,19 @@ final class ODEController: ObservableObject {
 
     var selectedInput: AudioDevices.Device? { inputDevices.first { $0.id == selectedInputID } }
     var selectedOutput: AudioDevices.Device? { outputDevices.first { $0.id == selectedOutputID } }
+
+    /// Resolve the system default input/output to a REAL device from our
+    /// filtered lists — never a virtual/aggregate one (if the system default
+    /// is ODE's own virtual mic, following it would loop audio back on itself).
+    private func systemDefaultInput() -> AudioDevices.Device? {
+        guard let def = AudioDevices.defaultInput() else { return nil }
+        return inputDevices.first { $0.id == def.id } ?? preferredInputDevice()
+    }
+
+    private func systemDefaultOutput() -> AudioDevices.Device? {
+        guard let def = AudioDevices.defaultOutput() else { return nil }
+        return outputDevices.first { $0.id == def.id } ?? preferredOutputDevice()
+    }
 
     /// Combined status across both denoising paths for the header.
     var statusText: String {
@@ -478,6 +592,7 @@ final class ODEController: ObservableObject {
     }
 
     func selectInput(_ id: AudioDeviceID) {
+        followSystemInput = false
         selectedInputID = id
         if micActive {
             micActive = false
@@ -488,10 +603,39 @@ final class ODEController: ObservableObject {
     }
 
     func selectOutput(_ id: AudioDeviceID) {
+        followSystemOutput = false
         selectedOutputID = id
         if speakerActive {
             speakerActive = false
             engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+        }
+        persistSettings()
+        reconcileSpeaker()
+    }
+
+    /// Switch a path to follow the system default device (auto-switching
+    /// when it changes — e.g. AirPods connecting).
+    func selectSystemDefaultInput() {
+        followSystemInput = true
+        if let id = systemDefaultInput()?.id, id != selectedInputID {
+            selectedInputID = id
+            if micActive {
+                micActive = false
+                engineQueue.async { [micEngine] in micEngine.stop() }
+            }
+        }
+        persistSettings()
+        reconcileMic()
+    }
+
+    func selectSystemDefaultOutput() {
+        followSystemOutput = true
+        if let id = systemDefaultOutput()?.id, id != selectedOutputID {
+            selectedOutputID = id
+            if speakerActive {
+                speakerActive = false
+                engineQueue.async { [speakerEngine] in speakerEngine.stop() }
+            }
         }
         persistSettings()
         reconcileSpeaker()
@@ -604,6 +748,8 @@ final class ODEController: ObservableObject {
     /// `completion` (arbitrary thread). The quit path uses this so an active
     /// meeting's transcript is saved instead of silently dropped.
     func finishTranscription(completion: @escaping () -> Void) {
+        pendingTranscriptionStop?.cancel()
+        pendingTranscriptionStop = nil
         guard #available(macOS 26.0, *), transcribing,
               let mt = meetingTranscriber as? MeetingTranscriber else {
             completion()
@@ -667,16 +813,42 @@ final class ODEController: ObservableObject {
 
     // MARK: - Transcription
 
+    /// Pending meeting-end: engines blip inactive on every device switch or
+    /// restart; ending the meeting immediately splits one call into several
+    /// transcripts. The meeting only ends after a quiet grace period.
+    private var pendingTranscriptionStop: DispatchWorkItem?
+    private static let meetingEndGrace: TimeInterval = 25
+
     /// Transcribe whenever the setting is on and a call is active on either path.
     private func reconcileTranscription() {
         guard #available(macOS 26.0, *) else { return }
         let inCall = micActive || speakerActive
         let shouldTranscribe = transcribeEnabled && inCall
 
-        if shouldTranscribe && !transcribing {
-            startTranscription()
-        } else if !shouldTranscribe && transcribing {
-            stopTranscription()
+        if shouldTranscribe {
+            // Call is (still) live — cancel any scheduled meeting end.
+            pendingTranscriptionStop?.cancel()
+            pendingTranscriptionStop = nil
+            if !transcribing {
+                startTranscription()
+            } else if let mt = meetingTranscriber as? MeetingTranscriber {
+                // Resumed within the grace window (or an engine was swapped):
+                // re-wire the audio feeds to the SAME meeting.
+                micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
+                speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
+            }
+        } else if transcribing && pendingTranscriptionStop == nil {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, #available(macOS 26.0, *) else { return }
+                self.pendingTranscriptionStop = nil
+                // Re-check: the call may have come back while we waited.
+                if !(self.transcribeEnabled && (self.micActive || self.speakerActive)) {
+                    self.stopTranscription()
+                }
+            }
+            pendingTranscriptionStop = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.meetingEndGrace,
+                                          execute: work)
         }
     }
 

@@ -30,12 +30,35 @@ struct PanelView: View {
             header
             cardsSection
             audioSection
+            if let warning = controller.micSilentWarning {
+                micWarningRow(warning)
+            }
             notesToggleRow
             meetingsRow
             footer
         }
         .padding(18)
         .frame(width: 360)
+    }
+
+    /// Dead-capture alert: shown when the mic path runs but hears nothing.
+    private func micWarningRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.12))
+                .overlay(RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.orange.opacity(0.4), lineWidth: 1)))
     }
 
     // MARK: - Header
@@ -150,14 +173,20 @@ struct PanelView: View {
             } trailing: {
                 DevicePicker(devices: controller.inputDevices,
                              selectedID: controller.selectedInputID,
-                             fallback: "Default") { controller.selectInput($0) }
+                             fallback: "Default",
+                             followingSystem: controller.followSystemInput,
+                             onSelectSystemDefault: { controller.selectSystemDefaultInput() },
+                             onSelect: { controller.selectInput($0) })
             }
             settingRow(icon: "speaker.wave.2") {
                 Text("Speaker").rowLabelStyle()
             } trailing: {
                 DevicePicker(devices: controller.outputDevices,
                              selectedID: controller.selectedOutputID,
-                             fallback: "Default") { controller.selectOutput($0) }
+                             fallback: "Default",
+                             followingSystem: controller.followSystemOutput,
+                             onSelectSystemDefault: { controller.selectSystemDefaultOutput() },
+                             onSelect: { controller.selectOutput($0) })
             }
         }
     }
@@ -329,16 +358,21 @@ struct PanelView: View {
 /// Compact device dropdown for a settings row: shows a shortened current
 /// device name, opens a picker list. Redundant suffixes ("Microphone",
 /// "Speakers") are stripped — the row label already says which is which.
+/// "System Default" (the default) follows the system as it changes — AirPods
+/// connect, ODE switches with them; picking a device pins it.
 struct DevicePicker: View {
     let devices: [AudioDevices.Device]
     let selectedID: AudioDeviceID?
     let fallback: String
+    var followingSystem: Bool = false
+    var onSelectSystemDefault: () -> Void = {}
     let onSelect: (AudioDeviceID) -> Void
     @State private var showing = false
 
     private var currentName: String {
         guard let dev = devices.first(where: { $0.id == selectedID }) else { return fallback }
-        return Self.shorten(dev.name)
+        let name = Self.shorten(dev.name)
+        return followingSystem ? "Auto · \(name)" : name
     }
 
     static func shorten(_ name: String) -> String {
@@ -365,14 +399,36 @@ struct DevicePicker: View {
         .buttonStyle(.plain)
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
+                Button {
+                    onSelectSystemDefault(); showing = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: followingSystem ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(followingSystem ? Color.accentColor : Color.secondary.opacity(0.5))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("System Default")
+                                .font(.system(size: 13))
+                            Text("Follows macOS — switches when AirPods connect")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider().padding(.vertical, 2)
                 ForEach(devices, id: \.id) { dev in
                     Button {
                         onSelect(dev.id); showing = false
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: dev.id == selectedID ? "checkmark.circle.fill" : "circle")
+                            Image(systemName: !followingSystem && dev.id == selectedID ? "checkmark.circle.fill" : "circle")
                                 .font(.system(size: 11))
-                                .foregroundStyle(dev.id == selectedID ? Color.accentColor : Color.secondary.opacity(0.5))
+                                .foregroundStyle(!followingSystem && dev.id == selectedID ? Color.accentColor : Color.secondary.opacity(0.5))
                             Text(dev.name)
                                 .font(.system(size: 13))
                                 .lineLimit(1)
