@@ -10,6 +10,9 @@ leaving the Mac.
 
 ## Shipped
 
+- **Panel redesign + identity** (v0.9.0) — status header, disclosure rows
+  with hint rings, live-aware Meetings row; "Clearing Wave" app icon and
+  menu-bar icon rendered from code; device pickers filtered to real hardware.
 - **Meeting intelligence** (v0.8.0) — auto-generated notes when a meeting
   ends: timestamped chapters, decisions, open questions, action items with
   owners, mentions-of-you, speaker rename, recap email. Calendar-aware
@@ -35,17 +38,16 @@ leaving the Mac.
 
 ## Backlog (rough priority)
 
-1. **Panel redesign** (v0.9.0) — refined cards + disclosure ("Advanced"
-   rows), status line back in the header, echo-cancellation moved to the
-   mic card's context; scales as settings grow.
-2. **Live translated captions** — Apple's on-device Translation framework over
-   the live segment stream (es⇄en first). Real-time interpretation without
-   the cloud.
-4. **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`
+1. **Live translated captions** (v0.10.0) — Apple's on-device Translation
+   framework over the live segment stream (es⇄en first). Real-time
+   interpretation without the cloud.
+2. **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`
    (already in our FluidAudio dependency): "Javier:" instead of "Speaker 1:".
-5. **Studio Voice** — pro-mic DSP chain on the mic path (high-pass, warmth
+3. **Studio Voice** — pro-mic DSP chain on the mic path (high-pass, warmth
    shelf, presence boost, compressor, limiter via Apple AUs). Most of the
    perceived "podcast voice" difference is EQ + dynamics, not AI.
+4. **Liquid-Glass layered .icon** — hand-authored layers compiled via actool
+   (Assets.car + CFBundleIconName), keeping the .icns fallback.
 6. **Background voice cancellation** — suppress *other people's voices* near
    you while keeping yours. Needs personalized speech extraction with a voice
    enrollment; ambitious, model-dependent, treat as an experiment.
