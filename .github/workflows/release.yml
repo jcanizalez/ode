@@ -107,26 +107,6 @@ jobs:
           rm authkey.p8
           xcrun stapler staple "$PKG"
 
-      - name: Update appcast (auto-updates)
-        env:
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-        run: |
-          PKG="dist/ODE-${{ steps.ver.outputs.version }}.pkg"
-          SIGN=$(find .build/artifacts -path "*Sparkle/bin/sign_update" | head -1)
-          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > ed_key
-          SIG_ATTRS=$("$SIGN" --ed-key-file ed_key "$PKG")
-          rm -f ed_key
-          URL="https://github.com/jcanizalez/ode/releases/download/${{ steps.ver.outputs.tag }}/ODE-${{ steps.ver.outputs.version }}.pkg"
-          git fetch origin main
-          git checkout -B main origin/main
-          python3 scripts/update-appcast.py appcast.xml \
-            "${{ steps.ver.outputs.version }}" "$URL" "$SIG_ATTRS"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add appcast.xml
-          git commit -m "appcast: v${{ steps.ver.outputs.version }}" || true
-          git push origin main
-
       - name: Create release and upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,6 +127,41 @@ jobs:
             gh release create "$tag" $flags
           fi
           gh release upload "$tag" "$PKG" --clobber
+
+      # Runs AFTER the release exists so the feed never points at a missing
+      # download, and an appcast hiccup can't block publishing.
+      - name: Update appcast (auto-updates)
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          PKG="dist/ODE-${{ steps.ver.outputs.version }}.pkg"
+          SIGN=$(find .build/artifacts -path "*Sparkle/bin/sign_update" | head -1)
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > ed_key
+          SIG_ATTRS=$("$SIGN" --ed-key-file ed_key "$PKG")
+          rm -f ed_key
+          URL="https://github.com/jcanizalez/ode/releases/download/${{ steps.ver.outputs.tag }}/ODE-${{ steps.ver.outputs.version }}.pkg"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Retry: main can move while this job runs (docs pushes, etc.) —
+          # rebase onto the fresh tip and push again instead of failing.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git checkout -B main origin/main
+            git checkout -- appcast.xml || true
+            python3 scripts/update-appcast.py appcast.xml \
+              "${{ steps.ver.outputs.version }}" "$URL" "$SIG_ATTRS"
+            git add appcast.xml
+            git commit -m "appcast: v${{ steps.ver.outputs.version }}" || exit 0
+            if git push origin main; then
+              echo "appcast pushed (attempt $attempt)"
+              exit 0
+            fi
+            echo "push rejected — retrying against fresh main"
+            git reset --hard origin/main
+            sleep 3
+          done
+          echo "appcast push failed after retries" >&2
+          exit 1
 
       - name: Clean up keychain
         if: always()
