@@ -24,6 +24,17 @@ final class LiveEngineTests: XCTestCase {
         XCTAssertFalse(engine.bypassDenoise)
     }
 
+    func testDenoiseStrengthDefaultsToFullAndClamps() {
+        let engine = LiveEngine()
+        XCTAssertEqual(engine.denoiseStrength, 1)
+        engine.denoiseStrength = 0.75
+        XCTAssertEqual(engine.denoiseStrength, 0.75)
+        engine.denoiseStrength = -1
+        XCTAssertEqual(engine.denoiseStrength, 0)
+        engine.denoiseStrength = 7
+        XCTAssertEqual(engine.denoiseStrength, 1)
+    }
+
     func testInitialStateIsIdle() {
         let engine = LiveEngine()
         XCTAssertEqual(engine.currentLevel, 0)

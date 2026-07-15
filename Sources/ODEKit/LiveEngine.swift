@@ -195,6 +195,18 @@ public final class LiveEngine {
         set { os_unfair_lock_lock(&bypassLock); _bypass = newValue; os_unfair_lock_unlock(&bypassLock) }
     }
 
+    /// How much of the denoised signal to use, 0...1 (1 = full denoising,
+    /// today's behavior; lower blends the original back in for naturalness).
+    /// Flippable live mid-session, same pattern as bypassDenoise.
+    private var strengthLock = os_unfair_lock()
+    private var _strength: Float = 1
+    public var denoiseStrength: Float {
+        get { os_unfair_lock_lock(&strengthLock); defer { os_unfair_lock_unlock(&strengthLock) }; return _strength }
+        set { os_unfair_lock_lock(&strengthLock); _strength = min(max(newValue, 0), 1); os_unfair_lock_unlock(&strengthLock) }
+    }
+    /// Dry/wet blender for partial strength. Touched only on processQueue.
+    private let mixer = DryWetMixer()
+
     /// Whether Apple's voice processing (acoustic echo cancellation against
     /// the system output) is applied to the capture side of each session.
     public let voiceProcessing: Bool
@@ -305,6 +317,7 @@ public final class LiveEngine {
         // Start every session from a clean slate.
         ring.reset()
         denoiser.resetStreaming()
+        mixer.reset()
         os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
 
         // Fresh engines for every session — see the property comment.
@@ -379,13 +392,22 @@ public final class LiveEngine {
                 // the tap thread (order is preserved; the ring's prefill
                 // cushion absorbs scheduling jitter).
                 processQueue.async { [weak self] in
-                    if self?.bypassDenoise == true {
+                    guard let self else { return }
+                    if self.bypassDenoise {
                         // Pass audio through untouched so the call still hears
                         // you, just without noise removal.
                         ring.write(mono)
                     } else {
+                        let s = self.denoiseStrength
+                        // At full strength the FIFO must stay empty, or dry
+                        // samples left from a lower setting would misalign
+                        // the next blend when strength drops again.
+                        if s < 0.999 { self.mixer.feed(dry: mono) } else { self.mixer.reset() }
                         let clean = denoiser.processStreaming(mono)
-                        if !clean.isEmpty { ring.write(clean) }
+                        if !clean.isEmpty {
+                            ring.write(s < 0.999 ? self.mixer.mix(wet: clean, strength: s)
+                                                 : clean)
+                        }
                     }
                 }
             }
@@ -473,6 +495,7 @@ public final class LiveEngine {
         processQueue.sync {}
         _ = denoiser.flushStreaming()
         denoiser.resetStreaming()
+        mixer.reset()
         playbackEngine?.stop()
         sourceNode = nil
         captureEngine = nil

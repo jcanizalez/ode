@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = ODEController()
     private var abController: ABTestWindowController?
     private var notesController: MeetingNotesWindowController?
+    private var settingsController: SettingsWindowController?
     private var hotKey: HotKey?
     private var capturePolicyObserver: NSObjectProtocol?
     /// Sparkle auto-updates (feed: appcast.xml on the repo's main branch,
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyCapturePolicy(popover.contentViewController?.view.window)
         applyCapturePolicy(notesController?.window)
         applyCapturePolicy(abController?.window)
+        applyCapturePolicy(settingsController?.window)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -49,10 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller: controller,
             onTest: { [weak self] in self?.openABTest() },
             onNotes: { [weak self] showLive in self?.openNotes(showLive: showLive) },
-            onCheckUpdates: { [weak self] in
-                self?.popover.performClose(nil)
-                self?.updater.checkForUpdates(nil)
-            },
+            onSettings: { [weak self] in self?.openSettings() },
             onQuit: { [weak self] in self?.quit() }
         )
         let hosting = NSHostingController(rootView: panel)
@@ -112,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             controller.refreshDevices()
+            controller.refreshNewNotesCount()
             guard let button = statusItem.button else { return }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
@@ -128,6 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard denoising != iconActive else { return }  // redraw only on change
         iconActive = denoising
         button.image = StatusIcon.image(active: denoising)
+        // Template image + button tint: the system keeps the icon visible on
+        // any menu bar; accent blue signals active denoising.
+        button.contentTintColor = denoising ? .controlAccentColor : nil
     }
 
     // MARK: - Actions
@@ -141,6 +144,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         abController?.showWindow(nil)
         abController?.window?.makeKeyAndOrderFront(nil)
         applyCapturePolicy(abController?.window)
+    }
+
+    private func openSettings() {
+        popover.performClose(nil)
+        if settingsController == nil {
+            settingsController = SettingsWindowController(
+                controller: controller,
+                autoCheckUpdates: Binding(
+                    get: { [weak self] in self?.updater.updater.automaticallyChecksForUpdates ?? true },
+                    set: { [weak self] in self?.updater.updater.automaticallyChecksForUpdates = $0 }),
+                onCheckUpdates: { [weak self] in self?.updater.checkForUpdates(nil) })
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsController?.showWindow(nil)
+        settingsController?.window?.makeKeyAndOrderFront(nil)
+        applyCapturePolicy(settingsController?.window)
     }
 
     private func openNotes(showLive: Bool = false) {

@@ -192,3 +192,100 @@ final class DenoiserTests: XCTestCase {
         XCTAssertTrue(denoiser.processStreaming([]).isEmpty)
     }
 }
+
+final class DryWetMixerTests: XCTestCase {
+    func testStrengthZeroReturnsDryUnchanged() {
+        let m = DryWetMixer()
+        let dry: [Float] = [0.1, -0.2, 0.3, -0.4]
+        m.feed(dry: dry)
+        let out = m.mix(wet: [0.9, 0.9, 0.9, 0.9], strength: 0)
+        XCTAssertEqual(out, dry)
+    }
+
+    func testStrengthOneReturnsWetUnchanged() {
+        let m = DryWetMixer()
+        m.feed(dry: [0.1, 0.2, 0.3])
+        let wet: [Float] = [0.7, 0.8, 0.9]
+        XCTAssertEqual(m.mix(wet: wet, strength: 1), wet)
+    }
+
+    func testHalfStrengthIsExactMidpoint() {
+        let m = DryWetMixer()
+        m.feed(dry: [0.0, 1.0])
+        let out = m.mix(wet: [1.0, 0.0], strength: 0.5)
+        XCTAssertEqual(out[0], 0.5, accuracy: 1e-6)
+        XCTAssertEqual(out[1], 0.5, accuracy: 1e-6)
+    }
+
+    func testMismatchedChunkSizesStayAligned() {
+        // Feed dry in 480-sample chunks; mix wet in 300/660 splits — every
+        // wet sample must pair with its cumulative dry counterpart.
+        let m = DryWetMixer()
+        let dry = (0..<960).map { Float($0) }
+        m.feed(dry: Array(dry[0..<480]))
+        m.feed(dry: Array(dry[480..<960]))
+        let wet = [Float](repeating: 0, count: 960)
+        let first = m.mix(wet: Array(wet[0..<300]), strength: 0)
+        let second = m.mix(wet: Array(wet[300..<960]), strength: 0)
+        XCTAssertEqual(first, Array(dry[0..<300]))
+        XCTAssertEqual(second, Array(dry[300..<960]))
+    }
+
+    func testShortFifoDegradesToWetWithoutCrashing() {
+        let m = DryWetMixer()
+        m.feed(dry: [0.5])                      // only one dry sample queued
+        let out = m.mix(wet: [0.0, 0.8], strength: 0)
+        XCTAssertEqual(out[0], 0.5, accuracy: 1e-6)  // paired
+        XCTAssertEqual(out[1], 0.8, accuracy: 1e-6)  // unpaired → stays wet
+    }
+
+    func testResetClearsPendingDry() {
+        let m = DryWetMixer()
+        m.feed(dry: [0.9, 0.9])
+        m.reset()
+        let out = m.mix(wet: [0.1], strength: 0)
+        XCTAssertEqual(out, [0.1])              // nothing dry left to blend
+    }
+
+    func testFifoCapDropsOldest() {
+        let m = DryWetMixer()
+        m.feed(dry: [Float](repeating: 1, count: DryWetMixer.maxPending))
+        m.feed(dry: [2])                        // pushes past the cap
+        // After the cap trim the newest sample must still be present at the
+        // tail; total pending stays at the cap.
+        let out = m.mix(wet: [Float](repeating: 0, count: DryWetMixer.maxPending),
+                        strength: 0)
+        XCTAssertEqual(out.count, DryWetMixer.maxPending)
+        XCTAssertEqual(out.last, 2)
+    }
+
+    /// Strength 0 through the real streaming denoiser + mixer must return the
+    /// input unchanged — this doubles as the empirical check that DPDFNet's
+    /// streaming output is cumulatively time-aligned with its input (no
+    /// hidden algorithmic delay to compensate for).
+    func testStrengthZeroRoundTripsThroughRealDenoiser() {
+        let denoiser = Denoiser()
+        denoiser.resetStreaming()
+        let m = DryWetMixer()
+        let tone = (0..<48_000).map {
+            Float(sin(2 * .pi * 220 * Double($0) / 48_000)) * 0.3
+        }
+        var out: [Float] = []
+        var fedUpTo = 0
+        for start in stride(from: 0, to: tone.count, by: 4_800) {
+            let chunk = Array(tone[start..<min(start + 4_800, tone.count)])
+            m.feed(dry: chunk)
+            fedUpTo += chunk.count
+            out.append(contentsOf: m.mix(wet: denoiser.processStreaming(chunk), strength: 0))
+        }
+        out.append(contentsOf: m.mix(wet: denoiser.flushStreaming(), strength: 0))
+        denoiser.resetStreaming()
+        // At strength 0 every emitted sample must equal its original — if the
+        // denoiser had a fixed delay this comparison would show a phase shift.
+        XCTAssertGreaterThan(out.count, 24_000)
+        for i in stride(from: 0, to: min(out.count, tone.count), by: 997) {
+            XCTAssertEqual(out[i], tone[i], accuracy: 1e-4,
+                           "misaligned at sample \(i) — denoiser delay needs compensation")
+        }
+    }
+}

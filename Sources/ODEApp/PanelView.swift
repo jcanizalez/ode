@@ -2,20 +2,16 @@ import SwiftUI
 import CoreAudio
 import ODEKit
 
-/// ODE glass control panel — voice cards + progressive disclosure.
+/// ODE glass control panel — a slim cockpit. Everything set-once lives in the
+/// Settings window (gear in the footer).
 /// Layout: header (status) · noise-cancellation cards · AUDIO rows ·
-/// More options (echo, transcription, name) · Meetings row (live-aware) ·
-/// pinned footer (Test + quit).
+/// Meeting notes toggle · Meetings row (live-aware) · footer (Test + ⚙ + ⏻).
 struct PanelView: View {
     @ObservedObject var controller: ODEController
     var onTest: () -> Void
     var onNotes: (_ showLive: Bool) -> Void
-    var onCheckUpdates: () -> Void = {}
+    var onSettings: () -> Void = {}
     var onQuit: () -> Void
-
-    @AppStorage("ode.panelExpanded") private var expanded = false
-    @State private var editingName = false
-    @State private var nameDraft = UserDefaults.standard.string(forKey: "ode.userName") ?? ""
 
     var body: some View {
         Group {
@@ -34,8 +30,7 @@ struct PanelView: View {
             header
             cardsSection
             audioSection
-            if expanded { transcriptionSection }
-            disclosureButton
+            notesToggleRow
             meetingsRow
             footer
         }
@@ -164,153 +159,31 @@ struct PanelView: View {
                              selectedID: controller.selectedOutputID,
                              fallback: "Default") { controller.selectOutput($0) }
             }
-            if expanded {
-                settingRow(icon: "wave.3.up",
-                           hint: "Stops your mic from re-capturing what your speakers play, so the other side never hears themselves. When on, ODE uses the system default microphone.") {
-                    Text("Echo cancellation").rowLabelStyle()
-                } trailing: {
-                    Toggle("", isOn: Binding(get: { controller.echoCancelEnabled },
-                                             set: { _ in controller.toggleEchoCancel() }))
-                        .toggleStyle(.switch).labelsHidden().tint(.accentColor)
-                        .scaleEffect(0.85)
-                }
-            }
         }
     }
 
-    // MARK: - TRANSCRIPTION section (expanded only)
+    // MARK: - Meeting notes toggle
 
-    private var transcriptionSection: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            sectionLabel("TRANSCRIPTION")
-            settingRow(icon: "doc.text",
-                       hint: "Transcribes calls on-device and writes notes automatically when the meeting ends: summary, chapters, decisions and action items. Nothing leaves your Mac.") {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Meeting notes").rowLabelStyle()
-                    Text(controller.transcribing ? "Transcribing…"
-                         : "Transcribe & summarize on-device")
-                        .font(.system(size: 10))
-                        .foregroundStyle(controller.transcribing
-                                         ? Color.red.opacity(0.9) : .white.opacity(0.4))
-                }
-            } trailing: {
-                Toggle("", isOn: Binding(get: { controller.transcribeEnabled },
-                                         set: { _ in controller.toggleTranscribe() }))
-                    .toggleStyle(.switch).labelsHidden().tint(.accentColor)
-                    .scaleEffect(0.85)
+    private var notesToggleRow: some View {
+        settingRow(icon: "doc.text",
+                   hint: "Transcribes calls on-device and writes notes automatically when the meeting ends: summary, chapters, decisions and action items. Nothing leaves your Mac.") {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Meeting notes").rowLabelStyle()
+                Text(controller.transcribing ? "Transcribing…"
+                     : "Transcribe & summarize on-device")
+                    .font(.system(size: 10))
+                    .foregroundStyle(controller.transcribing
+                                     ? Color.red.opacity(0.9) : .white.opacity(0.4))
             }
-            settingRow(icon: "cpu",
-                       hint: "Speech-to-text engine. Parakeet detects the language automatically (excellent Spanish); Apple is the built-in system engine. Applies to the next meeting.") {
-                Text("Model").rowLabelStyle()
-            } trailing: {
-                Menu {
-                    ForEach(TranscriptionEngine.allCases, id: \.self) { engine in
-                        Button {
-                            controller.setEngine(engine)
-                        } label: {
-                            HStack {
-                                Text(engine.displayName)
-                                if controller.asrEngine == engine {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    rowValue(controller.asrEngine.displayName)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
-            settingRow(icon: "person.2",
-                       hint: "Tells remote participants apart, labeling them Speaker 1, 2… in transcripts. You can rename them afterwards. Downloads a model on first use.") {
-                Text("Detect speakers").rowLabelStyle()
-            } trailing: {
-                Toggle("", isOn: Binding(get: { controller.detectSpeakers },
-                                         set: { _ in controller.toggleDetectSpeakers() }))
-                    .toggleStyle(.switch).labelsHidden().tint(.accentColor)
-                    .scaleEffect(0.85)
-            }
-            settingRow(icon: "arrow.triangle.2.circlepath",
-                       hint: "ODE checks for new versions automatically and installs them in place. Click to check right now.") {
-                Text("Check for updates").rowLabelStyle()
-            } trailing: {
-                Button { onCheckUpdates() } label: {
-                    rowValue("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
-                }
-                .buttonStyle(.plain)
-            }
-            settingRow(icon: "eye.slash",
-                       hint: "Keeps ODE's windows out of screen shares, recordings and screenshots — you still see them, your audience doesn't. Glance at live notes while presenting. Hotkey: ⌃⌥⌘O toggles noise cancellation from anywhere.") {
-                Text("Hide from screen sharing").rowLabelStyle()
-            } trailing: {
-                Toggle("", isOn: Binding(get: { controller.hideFromCapture },
-                                         set: { _ in controller.toggleHideFromCapture() }))
-                    .toggleStyle(.switch).labelsHidden().tint(.accentColor)
-                    .scaleEffect(0.85)
-            }
-            settingRow(icon: "person.crop.circle",
-                       hint: "Who \"You\" is in meeting notes — used for \"Mentions of you\" and so notes say your name instead of \"You\". Defaults to your macOS account name.") {
-                Text("Your name").rowLabelStyle()
-            } trailing: {
-                Button { editingName = true } label: {
-                    rowValue(displayName)
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $editingName, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Used for \"Mentions of you\" and note attribution")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                        TextField(NSFullUserName(), text: $nameDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 220)
-                            .onSubmit { commitName() }
-                        HStack {
-                            Spacer()
-                            Button("Save") { commitName() }
-                                .keyboardShortcut(.defaultAction)
-                        }
-                    }
-                    .padding(12)
-                }
-            }
+        } trailing: {
+            settingToggle(isOn: controller.transcribeEnabled) { controller.toggleTranscribe() }
         }
-    }
-
-    private var displayName: String {
-        let custom = UserDefaults.standard.string(forKey: "ode.userName") ?? ""
-        return custom.isEmpty ? NSFullUserName() : custom
-    }
-
-    private func commitName() {
-        UserDefaults.standard.set(nameDraft.trimmingCharacters(in: .whitespaces),
-                                  forKey: "ode.userName")
-        editingName = false
-    }
-
-    // MARK: - Disclosure
-
-    private var disclosureButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-        } label: {
-            HStack(spacing: 5) {
-                Text(expanded ? "Fewer options" : "More options")
-                    .font(.system(size: 13, weight: .semibold))
-                Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer()
-            }
-            .foregroundStyle(Color.accentColor)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Meetings row (live-aware)
 
     @ViewBuilder private var meetingsRow: some View {
-        if controller.transcribing, let live = controller.liveMeeting {
+        if controller.transcribing, let liveStart = controller.liveMeetingStartedAt {
             // Live: red, elapsed ticker, jumps straight to live notes & Q&A.
             Button { onNotes(true) } label: {
                 HStack(spacing: 11) {
@@ -330,7 +203,7 @@ struct PanelView: View {
                     }
                     Spacer(minLength: 0)
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text(elapsedText(since: live.startedAt))
+                        Text(elapsedText(since: liveStart))
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundStyle(Color.red.opacity(0.95))
                     }
@@ -391,9 +264,9 @@ struct PanelView: View {
         }
     }
 
-    /// New-notes badge (meetings saved since the window was last opened).
-    /// Recomputed when the popover renders — cheap for a local store.
-    private var newCount: Int { controller.newMeetingsCount() }
+    /// New-notes badge — refreshed by the controller when the popover opens
+    /// (never computed on the render path: it reads the transcript store).
+    private var newCount: Int { controller.newNotesCount }
 
     private func elapsedText(since date: Date) -> String {
         let s = max(0, Int(Date().timeIntervalSince(date)))
@@ -417,6 +290,16 @@ struct PanelView: View {
             }
             .buttonStyle(.plain)
 
+            Button(action: onSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 46, height: 44)
+                    .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.07)))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+            .help("ODE Settings")
+
             Button(action: onQuit) {
                 Image(systemName: "power")
                     .font(.system(size: 14, weight: .semibold))
@@ -426,48 +309,6 @@ struct PanelView: View {
             }
             .buttonStyle(.plain)
             .help("Quit ODE (virtual devices disappear until next launch)")
-        }
-    }
-
-    // MARK: - Row building blocks
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(.white.opacity(0.4))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 4)
-    }
-
-    private func settingRow<L: View, T: View>(
-        icon: String,
-        hint: String? = nil,
-        @ViewBuilder label: () -> L,
-        @ViewBuilder trailing: () -> T
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.5))
-                .frame(width: 18)
-            label()
-            if let hint { HintRing(text: hint) }
-            Spacer(minLength: 8)
-            trailing()
-        }
-        .padding(.vertical, 7)
-    }
-
-    private func rowValue(_ text: String) -> some View {
-        HStack(spacing: 4) {
-            Text(text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
-                .lineLimit(1)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.35))
         }
     }
 
@@ -482,37 +323,6 @@ struct PanelView: View {
         }
         .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.12), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 22))
-    }
-}
-
-extension Text {
-    fileprivate func rowLabelStyle() -> some View {
-        self.font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.white)
-    }
-}
-
-/// A subtle ⓘ ring next to a setting label; click (or hover) explains what
-/// the setting does in plain words.
-private struct HintRing: View {
-    let text: String
-    @State private var showing = false
-
-    var body: some View {
-        Button { showing.toggle() } label: {
-            Image(systemName: "questionmark.circle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.3))
-        }
-        .buttonStyle(.plain)
-        .help(text)
-        .popover(isPresented: $showing, arrowEdge: .bottom) {
-            Text(text)
-                .font(.system(size: 12))
-                .padding(12)
-                .frame(width: 240)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 }
 

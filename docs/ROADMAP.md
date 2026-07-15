@@ -40,41 +40,48 @@ leaving the Mac.
 
 Each release is a themed verse; infra rides along where it fits.
 
-### v0.9.1 — *An Ode to Care* (small, infrastructure)
+### v0.10.0 — *An Ode to Order* (the split)
+- **Slim popover + Settings window** — the menu-bar panel becomes a cockpit
+  (status, daily toggles, meetings); everything set-once moves to a
+  sidebar-style Settings window (General / Audio / Transcription / Updates /
+  About).
+- **Noise suppression strength** — High/Medium/Low; lower blends the original
+  signal back in for naturalness. Applies live, mid-call.
+- **Launch at login** (SMAppService).
 - **Auto-updates** (Sparkle + appcast from GitHub releases) — every release
-  after this one delivers itself.
-- **Invisible windows** (`NSWindow.sharingType = .none`) — ODE never appears
-  in screen shares.
-- **Global hotkey** to toggle noise cancellation.
-- **Liquid-Glass layered .icon** via actool (icns fallback kept).
+  after this one delivers itself. Invisible-in-screen-share windows, global
+  hotkey, Dependabot (built as the withdrawn 0.9.1 "Care").
+- **Menu-bar icon fix** — template rendering so it's visible on every bar;
+  panel responsiveness fixes.
+- Backlog: Liquid-Glass layered .icon via actool (icns fallback kept).
 
-### v0.10.0 — *An Ode to Tongues* (languages)
+### v0.11.0 — *An Ode to Tongues* (languages)
 - **Live translated captions** — Apple's on-device Translation over the live
   segment stream (es⇄en first). Real-time interpretation without the cloud.
 - **Spanish UI localization** — the release about language, in two languages.
 - **Map-reduce notes** — chapter-quality summaries for 2-hour meetings.
 
-### v0.11.0 — *An Ode to Presence* (proactive, part 1)
+### v0.12.0 — *An Ode to Presence* (proactive, part 1)
 - **Name-mention alerts** — someone says your name → notification with the
   sentence + one-click into the live view (mentions plumbing already exists).
 - **Suggested answers** — a question lands on you → the live view drafts a
   reply from meeting context, on-device.
 
-### v0.12.0 — *An Ode to Counsel* (proactive, part 2)
+### v0.13.0 — *An Ode to Counsel* (proactive, part 2)
 - **Screen context** — ScreenCaptureKit + Apple Vision OCR (fully local) so
   Ask grounds answers in what's on screen, not just what was said.
 - **Claude escalation** — explicit "Ask with Claude" for hard questions:
   question + minimal context to the Claude API, per-question, clearly
   badged, never automatic. On-device remains the default.
 
-### v0.13.0 — *An Ode to Names* (knowledge)
+### v0.14.0 — *An Ode to Names* (knowledge)
 - **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`:
   "Javier:" instead of "Speaker 1:".
 - **Cross-meeting Q&A** — ask across the whole transcript store.
 - **Action-item export** — owners' tasks to Reminders / Markdown clipboard.
 - **Microsoft Graph calendar connector** (opt-in) for Outlook-only setups.
 
-### v0.14.0 — *An Ode to Craft* (the voice itself)
+### v0.15.0 — *An Ode to Craft* (the voice itself)
 - **Studio Voice** — pro-mic DSP chain (high-pass, warmth, presence,
   compressor, limiter). Most of "podcast voice" is EQ + dynamics, not AI.
 - **Call recording** — optionally keep denoised audio next to transcripts.

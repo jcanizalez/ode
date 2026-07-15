@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreAudio
+import ServiceManagement
 import ODEKit
 
 extension Notification.Name {
@@ -48,6 +49,11 @@ final class ODEController: ObservableObject {
     /// Exclude ODE's windows from screen sharing/recordings (you still see
     /// them; the audience doesn't).
     @Published var hideFromCapture = true
+    /// How much noise to remove, 0...1 (1 = everything; lower keeps voices
+    /// more natural by blending the original signal back in).
+    @Published var noiseStrength: Double = 1
+    /// Whether ODE starts at login (mirrors SMAppService's real status).
+    @Published var launchAtLogin = false
     /// 0...1 while an AI model is downloading, nil otherwise.
     @Published var modelDownloadProgress: Double?
 
@@ -107,6 +113,11 @@ final class ODEController: ObservableObject {
         micEngine.label = "mic"
         speakerEngine.label = "speaker"
 
+        noiseStrength = d.object(forKey: Keys.noiseStrength) as? Double ?? 1
+        micEngine.denoiseStrength = Float(noiseStrength)
+        speakerEngine.denoiseStrength = Float(noiseStrength)
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+
         installObservers()
         installHardwareObservers()
 
@@ -139,6 +150,7 @@ final class ODEController: ObservableObject {
         static let hideFromCapture = "ode.hideFromCapture"
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
+        static let noiseStrength = "ode.noiseStrength"
     }
 
     private func persistSettings() {
@@ -150,6 +162,7 @@ final class ODEController: ObservableObject {
         d.set(detectSpeakers, forKey: Keys.detectSpeakers)
         d.set(echoCancelEnabled, forKey: Keys.echoCancel)
         d.set(hideFromCapture, forKey: Keys.hideFromCapture)
+        d.set(noiseStrength, forKey: Keys.noiseStrength)
         if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
         if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
     }
@@ -368,6 +381,30 @@ final class ODEController: ObservableObject {
         if engine == .parakeet { prefetchParakeetModel() }
     }
 
+    /// Set noise suppression strength (0...1). Applies live to both paths —
+    /// the engines blend the original signal back in below full strength.
+    func setNoiseStrength(_ value: Double) {
+        noiseStrength = min(max(value, 0), 1)
+        micEngine.denoiseStrength = Float(noiseStrength)
+        speakerEngine.denoiseStrength = Float(noiseStrength)
+        persistSettings()
+    }
+
+    /// Register/unregister ODE as a login item, then reflect the service's
+    /// real status (registration can fail silently for unsigned builds).
+    func toggleLaunchAtLogin() {
+        do {
+            if launchAtLogin {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("ODE: launch-at-login change failed: \(error.localizedDescription)")
+        }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
     /// Toggle whether ODE's windows are excluded from screen capture.
     func toggleHideFromCapture() {
         hideFromCapture.toggle()
@@ -390,6 +427,7 @@ final class ODEController: ObservableObject {
         let fresh = LiveEngine(voiceProcessing: echoCancelEnabled)
         fresh.label = "mic"
         fresh.bypassDenoise = !micEnabled
+        fresh.denoiseStrength = Float(noiseStrength)
         fresh.onCapturedAudio = old.onCapturedAudio   // keep transcription fed
         fresh.onConfigurationChange = { [weak self] in
             DispatchQueue.main.async { self?.restartMicPath() }
@@ -583,16 +621,24 @@ final class ODEController: ObservableObject {
 
     // MARK: - Meetings badge
 
-    /// Meetings saved since the user last opened the Meetings window —
-    /// the panel's "you have new notes" badge. Cleared by markMeetingsOpened.
-    func newMeetingsCount() -> Int {
+    /// Meetings saved since the user last opened the Meetings window — the
+    /// panel's "you have new notes" badge. Refreshed asynchronously when the
+    /// popover opens (loading the transcript store involves reading every
+    /// saved JSON — never do that on the render path).
+    @Published var newNotesCount = 0
+
+    func refreshNewNotesCount() {
         let last = UserDefaults.standard.object(forKey: "ode.meetingsLastOpened") as? Date
             ?? .distantPast
-        return TranscriptStore.shared.load().filter { $0.endedAt > last }.count
+        Task.detached(priority: .utility) {
+            let count = TranscriptStore.shared.load().filter { $0.endedAt > last }.count
+            await MainActor.run { self.newNotesCount = count }
+        }
     }
 
     func markMeetingsOpened() {
         UserDefaults.standard.set(Date(), forKey: "ode.meetingsLastOpened")
+        newNotesCount = 0
     }
 
     // MARK: - Live meeting access
@@ -602,6 +648,13 @@ final class ODEController: ObservableObject {
         guard #available(macOS 26.0, *),
               let mt = meetingTranscriber as? MeetingTranscriber else { return nil }
         return mt.liveSnapshot()
+    }
+
+    /// Frame-rate-safe liveness probe for the panel (no segment copying).
+    var liveMeetingStartedAt: Date? {
+        guard #available(macOS 26.0, *),
+              let mt = meetingTranscriber as? MeetingTranscriber else { return nil }
+        return mt.liveStartedAt
     }
 
     /// Attach a live Q&A exchange to the in-progress meeting so it's saved

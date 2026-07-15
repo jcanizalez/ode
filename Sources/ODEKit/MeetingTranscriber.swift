@@ -87,6 +87,13 @@ public final class MeetingTranscriber {
         lock.unlock()
     }
 
+    /// Cheap liveness probe: when the meeting is running and has content,
+    /// its start date — without copying segments (safe to poll every frame).
+    public var liveStartedAt: Date? {
+        lock.lock(); defer { lock.unlock() }
+        return running && !segments.isEmpty ? startedAt : nil
+    }
+
     /// Snapshot of the meeting *so far* (nil when idle or nothing was said
     /// yet). Lets the app show the transcript and answer questions about the
     /// meeting while it is still running.
