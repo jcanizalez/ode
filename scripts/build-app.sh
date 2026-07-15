@@ -14,7 +14,7 @@ XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
-ODE_VERSION="${ODE_VERSION:-0.10.1}"
+ODE_VERSION="${ODE_VERSION:-0.11.0}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp
@@ -24,6 +24,18 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RES"
 cp ".build/release/ODEApp" "$MACOS/ODE"
 cp "Resources/dpdfnet2_48khz_hr.onnx" "$RES/"
+
+# Localized UI strings: compile the String Catalog into .lproj folders that
+# Bundle.main resolves at runtime (swift build only copies the raw catalog).
+xcrun xcstringstool compile "Sources/ODEApp/Resources/Localizable.xcstrings" \
+    --output-directory "$RES"
+# Localized system-permission prompts.
+mkdir -p "$RES/es.lproj"
+cat > "$RES/es.lproj/InfoPlist.strings" <<'STRINGS'
+"NSMicrophoneUsageDescription" = "ODE necesita el micrófono para eliminar el ruido de fondo en tiempo real.";
+"NSCalendarsFullAccessUsageDescription" = "ODE lee tu calendario para titular las transcripciones con el nombre del evento.";
+"NSSpeechRecognitionUsageDescription" = "ODE transcribe las reuniones en tu Mac para que conserves notas en las que puedas buscar.";
+STRINGS
 
 # App icon — rendered from code (scripts/make-icon.swift).
 ICONSET="$(mktemp -d)/ODE.iconset"
@@ -55,6 +67,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>      <string>ODE</string>
     <key>CFBundleIconFile</key>        <string>ODE</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>es</string>
+    </array>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>LSUIElement</key>             <true/>
     <key>NSMicrophoneUsageDescription</key>

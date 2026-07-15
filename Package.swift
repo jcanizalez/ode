@@ -9,6 +9,7 @@ let sherpaLibDir = "\(pkgDir)/third_party/sherpa/lib"
 
 let package = Package(
     name: "ode",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     dependencies: [
         // Parakeet TDT v3 ASR (CoreML, Apple Neural Engine) for the
@@ -65,6 +66,7 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/ODEApp",
+            resources: [.process("Resources")],
             linkerSettings: [
                 // Sparkle.framework is embedded in the app bundle by
                 // build-app.sh; resolve it relative to the executable.

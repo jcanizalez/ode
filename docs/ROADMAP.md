@@ -71,13 +71,21 @@ Each release is a themed verse; infra rides along where it fits.
   VPIO: dormant instances silence capture, per-session activation storms the
   device stack). Needs a dedicated harness with real-mic assertions.
 
-### v0.11.0 — *An Ode to Tongues* (languages)
+### v0.11.0 — *An Ode to Tongues* (languages + the voice-processing debt)
 - **Live translated captions** — Apple's on-device Translation over the live
-  segment stream (es⇄en first). Real-time interpretation without the cloud.
-- **Spanish UI localization** — the release about language, in two languages.
-- **Map-reduce notes** — chapter-quality summaries for 2-hour meetings.
-- Polish: gear moves from the popover footer to the header (beside the
-  master toggle); power stays in the footer next to Test.
+  segment stream. ALL supported languages (~20), queried at runtime — never
+  hardcoded; per-line source detection so bilingual meetings translate each
+  line from its own language. Works retroactively on any saved meeting.
+- **Spanish UI localization** — String Catalog (129 strings), permission
+  prompts included; more UI languages become data changes.
+- **Map-reduce notes** — chapter-quality summaries for 2-hour meetings
+  (chunk → per-part condensed notes with real timestamps → one synthesis).
+- **Echo cancellation rebuilt** — persistent raw VoiceProcessingIO unit
+  (initialize once at launch; start/stop per session; mic released between
+  calls). The -10875 root cause: client format must be set on BOTH buses.
+  Verified by scripts/mic-e2e.sh (both EC modes × two sessions). Still
+  default-off + EXPERIMENTAL until ~20 consecutive harness passes.
+- Polish: gear moved from the popover footer to the header.
 
 ### v0.12.0 — *An Ode to Presence* (proactive, part 1)
 - **Name-mention alerts** — someone says your name → notification with the

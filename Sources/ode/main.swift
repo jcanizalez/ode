@@ -90,6 +90,18 @@ case "mic":
         exit(1)
     }
 
+case "micstatus":
+    // Test-harness probe: is the default input's mic actually held right now?
+    // (Asserts the voice-processing unit releases the mic between sessions.)
+    if let def = AudioDevices.defaultInput() {
+        let held = AudioDevices.isInputInUse(def.id)
+        print("default input: \(def.name)  in-use: \(held ? "YES" : "no")")
+        exit(held ? 1 : 0)
+    } else {
+        print("no default input device")
+        exit(2)
+    }
+
 case "devices":
     let devs = AudioDevices.all()
     let defOut = AudioDevices.defaultOutput()?.id

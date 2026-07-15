@@ -1,0 +1,1326 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "AI SUMMARY": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RESUMEN DE IA"
+          }
+        }
+      }
+    },
+    "AUDIO": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AUDIO"
+          }
+        }
+      }
+    },
+    "About": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Acerca de"
+          }
+        }
+      }
+    },
+    "Action items": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tareas"
+          }
+        }
+      }
+    },
+    "Active": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa"
+          }
+        }
+      }
+    },
+    "All": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Todas"
+          }
+        }
+      }
+    },
+    "Ask about the meeting so far…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pregunta sobre la reunión hasta ahora…"
+          }
+        }
+      }
+    },
+    "Ask anything about this meeting…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pregunta lo que quieras sobre esta reunión…"
+          }
+        }
+      }
+    },
+    "Audio": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio"
+          }
+        }
+      }
+    },
+    "CHAPTERS": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CAPÍTULOS"
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelar"
+          }
+        }
+      }
+    },
+    "Cancel my noise": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancela mi ruido"
+          }
+        }
+      }
+    },
+    "Cancel their noise": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancela su ruido"
+          }
+        }
+      }
+    },
+    "Check automatically": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar automáticamente"
+          }
+        }
+      }
+    },
+    "Check for updates": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar actualizaciones"
+          }
+        }
+      }
+    },
+    "Check now": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar ahora"
+          }
+        }
+      }
+    },
+    "Checks the update feed and installs new versions in place — signed and verified.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consulta el canal de actualizaciones e instala las nuevas versiones: firmadas y verificadas."
+          }
+        }
+      }
+    },
+    "Copy transcript": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copiar transcripción"
+          }
+        }
+      }
+    },
+    "Current version": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versión actual"
+          }
+        }
+      }
+    },
+    "DECISIONS": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DECISIONES"
+          }
+        }
+      }
+    },
+    "Default": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Predeterminado"
+          }
+        }
+      }
+    },
+    "Delete": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar"
+          }
+        }
+      }
+    },
+    "Delete meeting": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar reunión"
+          }
+        }
+      }
+    },
+    "Delete this meeting?": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Eliminar esta reunión?"
+          }
+        }
+      }
+    },
+    "Detect speakers": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detectar hablantes"
+          }
+        }
+      }
+    },
+    "Draft recap email (copies to clipboard)": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redactar correo de resumen (se copia al portapapeles)"
+          }
+        }
+      }
+    },
+    "EXPERIMENTAL": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EXPERIMENTAL"
+          }
+        }
+      }
+    },
+    "Echo cancellation": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelación de eco"
+          }
+        }
+      }
+    },
+    "Enable Transcripts and join a call.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa las transcripciones y únete a una llamada."
+          }
+        }
+      }
+    },
+    "Experimental — currently unreliable and can leave your mic silent; leave off unless testing. Stops your mic from re-capturing speaker sound. AirPods and most headsets do their own echo cancellation, so they don't need this.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental: puede dejar tu micrófono en silencio; déjalo desactivado salvo para pruebas. Evita que tu micrófono recapture el sonido de los altavoces. Los AirPods y la mayoría de los auriculares ya cancelan el eco por su cuenta."
+          }
+        }
+      }
+    },
+    "Follows macOS — switches when AirPods connect": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sigue a macOS: cambia al conectar los AirPods"
+          }
+        }
+      }
+    },
+    "General": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "General"
+          }
+        }
+      }
+    },
+    "Hear how you'll sound": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escucha cómo sonarás"
+          }
+        }
+      }
+    },
+    "Hide from screen sharing": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ocultar al compartir pantalla"
+          }
+        }
+      }
+    },
+    "High": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alta"
+          }
+        }
+      }
+    },
+    "How ODE lives on your Mac.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cómo vive ODE en tu Mac."
+          }
+        }
+      }
+    },
+    "How meetings are transcribed and attributed.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cómo se transcriben y atribuyen las reuniones."
+          }
+        }
+      }
+    },
+    "How much noise to remove. Lower keeps voices more natural by blending some of the original sound back in. Applies instantly, even mid-call.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cuánto ruido eliminar. Un nivel bajo mantiene las voces más naturales mezclando parte del sonido original. Se aplica al instante, incluso en plena llamada."
+          }
+        }
+      }
+    },
+    "Install ODE devices to begin": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instala los dispositivos de ODE para empezar"
+          }
+        }
+      }
+    },
+    "Interactivity": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interactividad"
+          }
+        }
+      }
+    },
+    "Jump to this moment in the transcript": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ir a este momento de la transcripción"
+          }
+        }
+      }
+    },
+    "KEY POINTS": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PUNTOS CLAVE"
+          }
+        }
+      }
+    },
+    "Keeps ODE's windows out of screen shares, recordings and screenshots — you still see them, your audience doesn't.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantiene las ventanas de ODE fuera de pantallas compartidas, grabaciones y capturas: tú las ves, tu audiencia no."
+          }
+        }
+      }
+    },
+    "LIVE": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EN VIVO"
+          }
+        }
+      }
+    },
+    "LIVE Q&A": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PREGUNTAS EN VIVO"
+          }
+        }
+      }
+    },
+    "Launch at login": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir al iniciar sesión"
+          }
+        }
+      }
+    },
+    "Listen to your original recording and with ODE.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escucha tu grabación original y con ODE."
+          }
+        }
+      }
+    },
+    "Listening…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escuchando…"
+          }
+        }
+      }
+    },
+    "Looks for new versions in the background, roughly once a day.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Busca nuevas versiones en segundo plano, aproximadamente una vez al día."
+          }
+        }
+      }
+    },
+    "Low": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baja"
+          }
+        }
+      }
+    },
+    "MENTIONS OF YOU": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MENCIONES DE TI"
+          }
+        }
+      }
+    },
+    "Medium": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Media"
+          }
+        }
+      }
+    },
+    "Meeting in progress": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reunión en curso"
+          }
+        }
+      }
+    },
+    "Meeting notes": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notas de reunión"
+          }
+        }
+      }
+    },
+    "Meetings": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reuniones"
+          }
+        }
+      }
+    },
+    "Microphone": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Micrófono"
+          }
+        }
+      }
+    },
+    "Model": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo"
+          }
+        }
+      }
+    },
+    "NOISE CANCELLATION": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CANCELACIÓN DE RUIDO"
+          }
+        }
+      }
+    },
+    "Name": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombre"
+          }
+        }
+      }
+    },
+    "No action items were found in this meeting.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se encontraron tareas en esta reunión."
+          }
+        }
+      }
+    },
+    "No devices": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin dispositivos"
+          }
+        }
+      }
+    },
+    "No meetings yet": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aún no hay reuniones"
+          }
+        }
+      }
+    },
+    "No transcript": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin transcripción"
+          }
+        }
+      }
+    },
+    "Noise cancellation shortcut": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atajo de cancelación de ruido"
+          }
+        }
+      }
+    },
+    "Noise suppression strength": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Intensidad de la supresión de ruido"
+          }
+        }
+      }
+    },
+    "Not installed": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No instalado"
+          }
+        }
+      }
+    },
+    "ODE Settings": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajustes de ODE"
+          }
+        }
+      }
+    },
+    "ODE can't hear your mic. Check System Settings → Privacy & Security → Microphone, or pick another device.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ODE no oye tu micrófono. Revisa Ajustes del Sistema → Privacidad y seguridad → Micrófono, o elige otro dispositivo."
+          }
+        }
+      }
+    },
+    "ODE can't hear your mic. Echo cancellation is experimental — try turning it off in Settings → Audio.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ODE no oye tu micrófono. La cancelación de eco es experimental: prueba a desactivarla en Ajustes → Audio."
+          }
+        }
+      }
+    },
+    "ODE keeps itself current — quietly.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ODE se mantiene al día, silenciosamente."
+          }
+        }
+      }
+    },
+    "OPEN QUESTIONS": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PREGUNTAS ABIERTAS"
+          }
+        }
+      }
+    },
+    "Off": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desactivado"
+          }
+        }
+      }
+    },
+    "On": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activado"
+          }
+        }
+      }
+    },
+    "On · waiting for a call": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activado · esperando una llamada"
+          }
+        }
+      }
+    },
+    "On-device noise cancellation & meeting notes.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelación de ruido y notas de reunión, en tu Mac."
+          }
+        }
+      }
+    },
+    "On-device noise cancellation & meeting notes.\nNothing you say ever leaves your Mac.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelación de ruido y notas de reunión en tu Mac.\nNada de lo que dices sale de tu Mac."
+          }
+        }
+      }
+    },
+    "One sec…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un segundo…"
+          }
+        }
+      }
+    },
+    "Open live notes & Q&A": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir notas en vivo y preguntas"
+          }
+        }
+      }
+    },
+    "Open source under the MIT license.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Código abierto bajo licencia MIT."
+          }
+        }
+      }
+    },
+    "Others": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otros"
+          }
+        }
+      }
+    },
+    "PRIVACY": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PRIVACIDAD"
+          }
+        }
+      }
+    },
+    "Passing through": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dejando pasar el audio"
+          }
+        }
+      }
+    },
+    "Preparing translation… (the language may still be downloading)": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando la traducción… (puede que el idioma aún se esté descargando)"
+          }
+        }
+      }
+    },
+    "Press the mic and read the line below.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pulsa el micrófono y lee la frase de abajo."
+          }
+        }
+      }
+    },
+    "Press the mic to start": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pulsa el micrófono para empezar"
+          }
+        }
+      }
+    },
+    "Processing options for your microphone and speaker.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opciones de procesamiento para tu micrófono y altavoz."
+          }
+        }
+      }
+    },
+    "Q&A": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preguntas"
+          }
+        }
+      }
+    },
+    "Quit ODE (virtual devices disappear until next launch)": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salir de ODE (los dispositivos virtuales desaparecen hasta el próximo inicio)"
+          }
+        }
+      }
+    },
+    "Re-summarize": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a resumir"
+          }
+        }
+      }
+    },
+    "Recap email copied!": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¡Correo de resumen copiado!"
+          }
+        }
+      }
+    },
+    "Record again": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabar de nuevo"
+          }
+        }
+      }
+    },
+    "Recording": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabando"
+          }
+        }
+      }
+    },
+    "Removing noise": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminando ruido"
+          }
+        }
+      }
+    },
+    "Removing noise…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminando ruido…"
+          }
+        }
+      }
+    },
+    "Rename": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renombrar"
+          }
+        }
+      }
+    },
+    "Rename to %@": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renombrar a %@"
+          }
+        }
+      }
+    },
+    "Search meetings…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar reuniones…"
+          }
+        }
+      }
+    },
+    "Select a meeting": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selecciona una reunión"
+          }
+        }
+      }
+    },
+    "Show in Finder": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar en Finder"
+          }
+        }
+      }
+    },
+    "Speaker": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Altavoz"
+          }
+        }
+      }
+    },
+    "Speech-to-text engine. Parakeet detects the language automatically (excellent Spanish); Apple is the built-in system engine. Applies to the next meeting.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motor de voz a texto. Parakeet detecta el idioma automáticamente (excelente español); Apple es el motor integrado del sistema. Se aplica a la próxima reunión."
+          }
+        }
+      }
+    },
+    "Star": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Destacar"
+          }
+        }
+      }
+    },
+    "Starred": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Destacadas"
+          }
+        }
+      }
+    },
+    "Started %@": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comenzó %@"
+          }
+        }
+      }
+    },
+    "Starts ODE automatically when you log in, so the virtual devices are always ready before your first call.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abre ODE automáticamente al iniciar sesión, para que los dispositivos virtuales estén listos antes de tu primera llamada."
+          }
+        }
+      }
+    },
+    "Summaries, transcripts & actions": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resúmenes, transcripciones y tareas"
+          }
+        }
+      }
+    },
+    "Summarize": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resumir"
+          }
+        }
+      }
+    },
+    "Summarize the meeting to extract action items.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume la reunión para extraer las tareas."
+          }
+        }
+      }
+    },
+    "Summary": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resumen"
+          }
+        }
+      }
+    },
+    "System Default": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Predeterminado del sistema"
+          }
+        }
+      }
+    },
+    "TALK TIME": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TIEMPO DE PALABRA"
+          }
+        }
+      }
+    },
+    "Tap Summarize to generate an on-device AI summary, key points, and action items.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pulsa Resumir para generar en tu Mac un resumen de IA, puntos clave y tareas."
+          }
+        }
+      }
+    },
+    "Tells remote participants apart, labeling them Speaker 1, 2… in transcripts. You can rename them afterwards. Downloads a model on first use.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Distingue a los participantes remotos, etiquetándolos como Hablante 1, 2… en las transcripciones. Puedes renombrarlos después. Descarga un modelo la primera vez."
+          }
+        }
+      }
+    },
+    "Test how you'll sound": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prueba cómo sonarás"
+          }
+        }
+      }
+    },
+    "Test noise removal": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Probar la limpieza de ruido"
+          }
+        }
+      }
+    },
+    "The meeting is already in this language.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La reunión ya está en este idioma."
+          }
+        }
+      }
+    },
+    "The new name appears in the transcript, talk time and action items.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El nuevo nombre aparece en la transcripción, el tiempo de palabra y las tareas."
+          }
+        }
+      }
+    },
+    "Toggles noise cancellation from anywhere — even mid-call with another app focused.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa la cancelación de ruido desde cualquier lugar, incluso en plena llamada con otra app en primer plano."
+          }
+        }
+      }
+    },
+    "Transcribe & summarize on-device": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcribe y resume en tu Mac"
+          }
+        }
+      }
+    },
+    "Transcribing…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcribiendo…"
+          }
+        }
+      }
+    },
+    "Transcript": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcripción"
+          }
+        }
+      }
+    },
+    "Transcription": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcripción"
+          }
+        }
+      }
+    },
+    "Translate": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traducir"
+          }
+        }
+      }
+    },
+    "Translating…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traduciendo…"
+          }
+        }
+      }
+    },
+    "Turn both noise-cancellation paths on or off": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa o desactiva ambas rutas de cancelación de ruido"
+          }
+        }
+      }
+    },
+    "Unstar": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar de destacadas"
+          }
+        }
+      }
+    },
+    "Updates": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualizaciones"
+          }
+        }
+      }
+    },
+    "Version %@": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versión %@"
+          }
+        }
+      }
+    },
+    "Who \"You\" is in meeting notes — used for \"Mentions of you\" and so notes say your name instead of \"You\". Defaults to your macOS account name.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quién es «Tú» en las notas de reunión: se usa para «Menciones de ti» y para que las notas digan tu nombre. Por defecto, el nombre de tu cuenta de macOS."
+          }
+        }
+      }
+    },
+    "You": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tú"
+          }
+        }
+      }
+    },
+    "Your name": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tu nombre"
+          }
+        }
+      }
+    },
+    "Your recording never leaves your device and isn't saved.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tu grabación nunca sale de tu dispositivo y no se guarda."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

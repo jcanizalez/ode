@@ -25,6 +25,24 @@ final class MeetingsModel: ObservableObject {
     @Published var draftingRecap = false
     @Published var recapCopied = false
 
+    // MARK: - Translated captions (live + retro; Apple Translation, on-device)
+
+    /// BCP-47 identifier of the caption target language; nil = off. The
+    /// TranslationDriver (macOS 15+) watches this and feeds `translations`.
+    @Published var captionTargetID: String? {
+        didSet { if oldValue != captionTargetID { translations.removeAll() } }
+    }
+    /// Per-segment translations, keyed by segment id. Model-layer cache only —
+    /// nothing is persisted; retranslating is cheap and always current.
+    @Published var translations: [TranscriptSegment.ID: String] = [:]
+    /// All target languages Apple's on-device translation supports, queried
+    /// at runtime (never hardcoded) — (BCP-47 id, localized display name).
+    @Published var supportedTargets: [(id: String, name: String)] = []
+    /// One-line translation status ("Downloading language…"), nil when quiet.
+    @Published var translationNote: String?
+    /// True while captions are being generated for pending segments.
+    @Published var translating = false
+
     /// Name used for "Mentions of you" (first name). Override via defaults.
     var userFirstName: String {
         let name = UserDefaults.standard.string(forKey: "ode.userName")

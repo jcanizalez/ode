@@ -243,3 +243,56 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(loaded.first?.summary, "Con resumen")
     }
 }
+
+final class ChunkingTests: XCTestCase {
+    private func longTranscript(segments: Int, textLen: Int = 80) -> Transcript {
+        var segs: [TranscriptSegment] = []
+        let text = String(repeating: "palabra ", count: textLen / 8)
+        for i in 0..<segments {
+            let speaker: String = i % 2 == 0 ? "You" : "Ana"
+            let start = TimeInterval(i * 20)
+            let end = TimeInterval(i * 20 + 15)
+            segs.append(TranscriptSegment(speaker: speaker, start: start,
+                                          end: end, text: text))
+        }
+        return Transcript(title: "Long", startedAt: Date(), endedAt: Date(),
+                          segments: segs)
+    }
+
+    func testChunksPreserveEveryLineInOrder() {
+        let t = longTranscript(segments: 300)
+        let lines = MeetingNotesFormat.renderedLines(t)
+        let chunks = MeetingNotesFormat.chunks(t)
+        let rejoined = chunks.joined(separator: "\n").split(separator: "\n").map(String.init)
+        XCTAssertEqual(rejoined, lines)   // nothing dropped, nothing reordered
+        XCTAssertGreaterThan(chunks.count, 1)
+    }
+
+    func testChunksRespectTargetSize() {
+        let t = longTranscript(segments: 300)
+        for chunk in MeetingNotesFormat.chunks(t, targetChars: 6_000) {
+            // A chunk may exceed target by at most one line (~<500 chars).
+            XCTAssertLessThan(chunk.count, 6_600)
+        }
+    }
+
+    func testChunkCountCappedByGrowingSize() {
+        let t = longTranscript(segments: 2_000)
+        let chunks = MeetingNotesFormat.chunks(t, targetChars: 1_000, maxChunks: 12)
+        XCTAssertLessThanOrEqual(chunks.count, 13)  // size grows instead
+    }
+
+    func testShortTranscriptIsSingleChunk() {
+        let t = longTranscript(segments: 5)
+        XCTAssertEqual(MeetingNotesFormat.chunks(t).count, 1)
+    }
+
+    func testLinesNeverSplitAcrossChunks() {
+        let t = longTranscript(segments: 300)
+        for chunk in MeetingNotesFormat.chunks(t) {
+            for line in chunk.split(separator: "\n") {
+                XCTAssertTrue(line.hasPrefix("["), "chunk boundary split a line")
+            }
+        }
+    }
+}

@@ -208,39 +208,17 @@ public final class LiveEngine {
     private let mixer = DryWetMixer()
 
     /// Whether Apple's voice processing (acoustic echo cancellation against
-    /// the system output) is applied to the capture side of each session.
-    public let voiceProcessing: Bool
+    /// the system output) is applied to the capture side. Read at start();
+    /// settable so the owner can flip echo cancellation without swapping
+    /// engines. VP capture runs on the process-wide VoiceProcessingCapture
+    /// unit (one VPIO instance per process — see that type's comment for the
+    /// full failure history that led here).
+    public var voiceProcessing: Bool
+    /// True while the CURRENT session captures via the shared VPIO unit.
+    private var usingVPIO = false
 
     public init(voiceProcessing: Bool = false) {
         self.voiceProcessing = voiceProcessing
-        if voiceProcessing {
-            Self.warmUpVoiceProcessing()
-        }
-    }
-
-    /// The first VPIO activation reconfigures the system's default-device
-    /// stack — a storm that, when it happened at session start, killed other
-    /// apps' audio engines mid-call. Run it once at engine creation (app
-    /// launch), when nobody is on a call.
-    ///
-    /// The warmup engine must be STARTED and then fully RELEASED: a
-    /// prepared-but-never-started VPIO instance held for the app's lifetime
-    /// leaves the voice-processing stack half-configured, and every real
-    /// session's capture reads silence (the 0.8.0–0.10.0 dead-mic bug).
-    private static var vpWarmedUp = false
-    private static func warmUpVoiceProcessing() {
-        guard !vpWarmedUp else { return }
-        vpWarmedUp = true
-        let warmup = AVAudioEngine()
-        do {
-            try warmup.inputNode.setVoiceProcessingEnabled(true)
-            // Starting (not just preparing) is what stands the stack up.
-            try warmup.start()
-        } catch {
-            diagnostic("[warmup] VPIO warmup failed: \(error.localizedDescription)")
-        }
-        warmup.stop()
-        // Engine goes out of scope: nothing dormant is left holding VPIO.
     }
 
     /// Optional sink for captured audio (post-resample, 48 kHz mono), used for
@@ -276,7 +254,10 @@ public final class LiveEngine {
     /// While a start is still in flight it reports healthy (grace period).
     public var isHealthy: Bool {
         if isRunning {
-            return captureEngine?.isRunning == true && playbackEngine?.isRunning == true
+            let captureAlive = usingVPIO
+                ? VoiceProcessingCapture.shared.isAlive
+                : captureEngine?.isRunning == true
+            return captureAlive && playbackEngine?.isRunning == true
         }
         return CFAbsoluteTimeGetCurrent() - startInitiatedAt < 3.0
     }
@@ -341,46 +322,34 @@ public final class LiveEngine {
         mixer.reset()
         os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
 
-        // Fresh engines for every session — see the property comment.
-        let capture = AVAudioEngine()
+        // Playback engine is fresh every session; capture is either a fresh
+        // engine (plain path) or the process-wide VPIO unit (echo cancel).
+        usingVPIO = voiceProcessing
         let playback = AVAudioEngine()
-        captureEngine = capture
         playbackEngine = playback
+        let capture: AVAudioEngine? = usingVPIO ? nil : AVAudioEngine()
+        captureEngine = capture
 
         // If anything below throws we must tear the half-built graph down —
         // otherwise the next start() would stack a second source node.
         do {
-            // --- Capture side first: voice processing must be configured
-            // before pinning devices or reading formats (it swaps the node's
-            // underlying audio unit).
-            let input = capture.inputNode
-            if voiceProcessing {
-                try input.setVoiceProcessingEnabled(true)
-                if #available(macOS 14.0, *) {
-                    // AEC only — don't duck the rest of the system's audio (the
-                    // speaker path plays the actual call through these speakers).
-                    input.voiceProcessingOtherAudioDuckingConfiguration =
-                        .init(enableAdvancedDucking: false, duckingLevel: .min)
+            var inFormat: AVAudioFormat?
+            if let capture {
+                // --- Plain capture engine, pinned to the selected device ---
+                let input = capture.inputNode
+                if let inDev = inputDevice {
+                    try setInputDevice(capture, deviceID: inDev.id)
                 }
-            } else if let inDev = inputDevice {
-                // VPIO manages its own full-duplex device pair; pinning a
-                // device into it breaks the unit. With echo cancellation on,
-                // capture follows the system default input instead.
-                try setInputDevice(capture, deviceID: inDev.id)
-            }
-            // Validate the format: if the device just disappeared it comes
-            // back invalid (0 Hz), and installTap would raise an uncatchable
-            // NSException — throw a proper error instead of crashing.
-            var inFormat = input.inputFormat(forBus: 0)
-            if voiceProcessing, inFormat.sampleRate <= 0 {
-                // VPIO defines its format lazily — prepare() materializes it.
-                capture.prepare()
-                inFormat = input.inputFormat(forBus: 0)
-            }
-            guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
-                throw NSError(domain: "ode.live", code: -11,
-                              userInfo: [NSLocalizedDescriptionKey:
-                                "Input device has no valid format (was it disconnected?)"])
+                // Validate the format: if the device just disappeared it comes
+                // back invalid (0 Hz), and installTap would raise an uncatchable
+                // NSException — throw a proper error instead of crashing.
+                let f = input.inputFormat(forBus: 0)
+                guard f.sampleRate > 0, f.channelCount > 0 else {
+                    throw NSError(domain: "ode.live", code: -11,
+                                  userInfo: [NSLocalizedDescriptionKey:
+                                    "Input device has no valid format (was it disconnected?)"])
+                }
+                inFormat = f
             }
 
             let fmt = AudioIO.monoFormat
@@ -402,52 +371,43 @@ public final class LiveEngine {
                 try setOutputDevice(playback, deviceID: dev.id)
             }
 
-            // --- Capture tap: mic -> (process queue: denoise) -> ring ---
             captureConverter = nil  // fresh converter state per session
-            input.installTap(onBus: 0, bufferSize: 480, format: inFormat) { [denoiser, ring, processQueue, weak self] buffer, _ in
-                guard let self else { return }
-                self.onCapturedAudio?(buffer)
-                let mono = self.convertToMono48k(buffer)
-                self.updateLevel(mono)
-                // Hand off to the serial processing queue: keeps inference off
-                // the tap thread (order is preserved; the ring's prefill
-                // cushion absorbs scheduling jitter).
-                processQueue.async { [weak self] in
+            if let capture, let inFormat {
+                // --- Capture tap: mic -> (process queue: denoise) -> ring ---
+                capture.inputNode.installTap(onBus: 0, bufferSize: 480,
+                                             format: inFormat) { [weak self] buffer, _ in
+                    self?.processCaptured(buffer)
+                }
+                capture.prepare()
+                playback.prepare()
+                try playback.start()
+                try capture.start()
+            } else {
+                // --- VPIO capture: shared unit, initialized once at launch.
+                // It always follows the system default input (VPIO manages
+                // its own device pair; pinning breaks it).
+                playback.prepare()
+                try playback.start()
+                try VoiceProcessingCapture.shared.start { [weak self] buffer in
+                    self?.processCaptured(buffer)
+                }
+                VoiceProcessingCapture.shared.onFailure = { [weak self] in
                     guard let self else { return }
-                    if self.bypassDenoise {
-                        // Pass audio through untouched so the call still hears
-                        // you, just without noise removal.
-                        ring.write(mono)
-                    } else {
-                        let s = self.denoiseStrength
-                        // At full strength the FIFO must stay empty, or dry
-                        // samples left from a lower setting would misalign
-                        // the next blend when strength drops again.
-                        if s < 0.999 { self.mixer.feed(dry: mono) } else { self.mixer.reset() }
-                        let clean = denoiser.processStreaming(mono)
-                        if !clean.isEmpty {
-                            ring.write(s < 0.999 ? self.mixer.mix(wet: clean, strength: s)
-                                                 : clean)
-                        }
-                    }
+                    guard CFAbsoluteTimeGetCurrent() - self.startedAtTime > 1.0 else { return }
+                    self.onConfigurationChange?()
                 }
             }
-
-            capture.prepare()
-            playback.prepare()
-            try playback.start()
-            try capture.start()
         } catch {
             startInitiatedAt = 0  // failed starts get no health grace
             teardown()
             throw error
         }
 
-        // Both engines stop themselves when the configuration changes (device
+        // Engines stop themselves when the configuration changes (device
         // unplugged, sample-rate change). Surface that so the owner can restart
         // the loop instead of silently going dead mid-call.
         let nc = NotificationCenter.default
-        for engine in [capture, playback] {
+        for engine in [capture, playback].compactMap({ $0 }) {
             configObservers.append(nc.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
             ) { [weak self] _ in
@@ -460,6 +420,37 @@ public final class LiveEngine {
 
         startedAtTime = CFAbsoluteTimeGetCurrent()
         isRunning = true
+    }
+
+    /// Shared capture-processing body — identical for the plain engine tap
+    /// and the VPIO sink: transcription feed, meters, then serial-queue
+    /// denoise/blend into the ring.
+    private func processCaptured(_ buffer: AVAudioPCMBuffer) {
+        onCapturedAudio?(buffer)
+        let mono = convertToMono48k(buffer)
+        updateLevel(mono)
+        // Hand off to the serial processing queue: keeps inference off the
+        // audio thread (order is preserved; the ring's prefill cushion
+        // absorbs scheduling jitter).
+        processQueue.async { [weak self] in
+            guard let self else { return }
+            if self.bypassDenoise {
+                // Pass audio through untouched so the call still hears you,
+                // just without noise removal.
+                self.ring.write(mono)
+            } else {
+                let s = self.denoiseStrength
+                // At full strength the FIFO must stay empty, or dry samples
+                // left from a lower setting would misalign the next blend
+                // when strength drops again.
+                if s < 0.999 { self.mixer.feed(dry: mono) } else { self.mixer.reset() }
+                let clean = self.denoiser.processStreaming(mono)
+                if !clean.isEmpty {
+                    self.ring.write(s < 0.999 ? self.mixer.mix(wet: clean, strength: s)
+                                              : clean)
+                }
+            }
+        }
     }
 
     public func stop() {
@@ -510,6 +501,12 @@ public final class LiveEngine {
     private func teardown() {
         configObservers.forEach { NotificationCenter.default.removeObserver($0) }
         configObservers.removeAll()
+        if usingVPIO {
+            // Mic released; the shared unit stays initialized for next time.
+            VoiceProcessingCapture.shared.onFailure = nil
+            VoiceProcessingCapture.shared.stop()
+            usingVPIO = false
+        }
         captureEngine?.inputNode.removeTap(onBus: 0)
         captureEngine?.stop()
         // Drain in-flight inference before touching the denoiser's state.

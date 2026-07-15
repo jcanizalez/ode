@@ -31,7 +31,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case general, audio, transcription, updates, about
     var id: String { rawValue }
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
         case .general: return "General"
         case .audio: return "Audio"
@@ -158,7 +158,7 @@ struct SettingsView: View {
         }
     }
 
-    private var paneSubtitle: String {
+    private var paneSubtitle: LocalizedStringKey {
         switch pane {
         case .general: return "How ODE lives on your Mac."
         case .audio: return "Processing options for your microphone and speaker."

@@ -19,25 +19,7 @@ public enum MeetingNotesFormat {
     /// model only learns the user's name if someone happens to say it aloud.
     public static func timestampedText(_ t: Transcript, maxChars: Int = 8_000,
                                        youName: String? = nil) -> String {
-        var lines: [String] = []
-        var currentSpeaker: String?
-        for seg in t.ordered {
-            let label = (seg.speaker == "You" && youName != nil)
-                ? "\(youName!) (me)" : seg.speaker
-            // Merge consecutive same-speaker segments, but cap the merged
-            // line: long monologues otherwise produce multi-thousand-char
-            // lines that defeat the size budget (and starve chapters of
-            // timestamps). Over the cap, a fresh timestamped line starts.
-            if seg.speaker == currentSpeaker, let last = lines.last,
-               last.count + seg.text.count < 400 {
-                lines[lines.count - 1] = last + " " + seg.text
-            } else {
-                let mm = Int(seg.start) / 60, ss = Int(seg.start) % 60
-                lines.append(String(format: "[%02d:%02d] %@: %@",
-                                    mm, ss, label, seg.text))
-                currentSpeaker = seg.speaker
-            }
-        }
+        var lines = renderedLines(t, youName: youName)
         var text = lines.joined(separator: "\n")
         // Uniform downsampling: drop every k-th line until it fits. The step
         // is clamped to the line count — otherwise, when the text sits just
@@ -54,6 +36,52 @@ public enum MeetingNotesFormat {
         // Absolute guarantee — the model's context is a hard limit.
         if text.count > maxChars { text = String(text.prefix(maxChars)) }
         return text
+    }
+
+    /// Render a transcript as "[mm:ss] Speaker: text" lines with consecutive
+    /// same-speaker merging (line cap 400 chars — long monologues otherwise
+    /// produce multi-thousand-char lines that defeat size budgets and starve
+    /// chapters of timestamps).
+    public static func renderedLines(_ t: Transcript, youName: String? = nil) -> [String] {
+        var lines: [String] = []
+        var currentSpeaker: String?
+        for seg in t.ordered {
+            let label = (seg.speaker == "You" && youName != nil)
+                ? "\(youName!) (me)" : seg.speaker
+            if seg.speaker == currentSpeaker, let last = lines.last,
+               last.count + seg.text.count < 400 {
+                lines[lines.count - 1] = last + " " + seg.text
+            } else {
+                let mm = Int(seg.start) / 60, ss = Int(seg.start) % 60
+                lines.append(String(format: "[%02d:%02d] %@: %@",
+                                    mm, ss, label, seg.text))
+                currentSpeaker = seg.speaker
+            }
+        }
+        return lines
+    }
+
+    /// Partition a transcript into time-ordered prompt chunks for map-reduce
+    /// summarization of long meetings. Every rendered line survives (no
+    /// downsampling); lines are never split across chunks. Chunk size grows
+    /// when needed so the count never exceeds `maxChunks`.
+    public static func chunks(_ t: Transcript, targetChars: Int = 6_000,
+                              maxChunks: Int = 12, youName: String? = nil) -> [String] {
+        let lines = renderedLines(t, youName: youName)
+        let total = lines.reduce(0) { $0 + $1.count + 1 }
+        let size = max(targetChars, total / maxChunks + 1)
+        var out: [String] = []
+        var current = ""
+        for line in lines {
+            if !current.isEmpty && current.count + line.count + 1 > size {
+                out.append(current)
+                current = line
+            } else {
+                current = current.isEmpty ? line : current + "\n" + line
+            }
+        }
+        if !current.isEmpty { out.append(current) }
+        return out
     }
 
     /// Whether a transcript has enough substance to be worth summarizing
@@ -251,6 +279,14 @@ public enum MeetingAI {
         guard isAvailable else {
             throw AIError.unavailable(availabilityMessage() ?? "On-device AI unavailable.")
         }
+        // Long meetings overflow the ~4k-token window; a single pass would
+        // downsample a 2-hour meeting into mush. Map-reduce instead: condense
+        // each part, then synthesize the final notes from the part notes.
+        let fullLines = MeetingNotesFormat.renderedLines(transcript, youName: userName)
+        let totalChars = fullLines.reduce(0) { $0 + $1.count + 1 }
+        if totalChars > 10_000 {
+            return try await mapReduceInsights(for: transcript, userName: userName)
+        }
         let body = MeetingNotesFormat.timestampedText(transcript, youName: userName)
 
         // Call 1: notes.
@@ -260,7 +296,8 @@ public enum MeetingAI {
                 let session = LanguageModelSession(instructions: """
                     You are a meeting assistant. Speakers are labeled by name (or
                     "You"/"Speaker N"). Be concise and accurate; never invent facts
-                    that are not in the transcript.
+                    that are not in the transcript. Write ALL output in the SAME
+                    language the participants speak.
                     """)
                 return try await session.respond(
                     to: "Produce meeting notes for this transcript.\n\nTRANSCRIPT:\n\(body)",
@@ -302,6 +339,92 @@ public enum MeetingAI {
             rawChapters = []
         }
 
+        return Insights(
+            summary: notes.summary.trimmingCharacters(in: .whitespacesAndNewlines),
+            keyPoints: notes.keyPoints,
+            decisions: notes.decisions,
+            openQuestions: notes.openQuestions,
+            actionItems: notes.actionItems,
+            chapters: MeetingNotesFormat.cleanChapters(rawChapters,
+                                                       duration: transcript.duration))
+    }
+
+    /// Map-reduce for long meetings. MAP: condense each time-ordered chunk
+    /// into compact prefixed-line notes (the fallback format — parseable and
+    /// cheap; chapter timestamps stay REAL because each chunk carries its own
+    /// "[mm:ss]" lines). REDUCE: synthesize the final notes from the part
+    /// notes with one guided-generation call. A failed chunk is skipped —
+    /// partial coverage beats no notes.
+    private static func mapReduceInsights(for transcript: Transcript,
+                                          userName: String?) async throws -> Insights {
+        let parts = MeetingNotesFormat.chunks(transcript, youName: userName)
+        var partNotes: [(index: Int, notes: MeetingNotesFormat.ParsedNotes)] = []
+        for (i, part) in parts.enumerated() {
+            do {
+                let raw = try await withTimeout {
+                    let session = LanguageModelSession(instructions: """
+                        You condense one PART of a longer meeting. Write ALL output
+                        in the same language the participants speak. Output ONLY
+                        lines in these formats, nothing else:
+                        SUMMARY: <3-4 sentence summary of this part>
+                        DECISION: <decision made>          (omit if none)
+                        OPEN: <unresolved question>        (omit if none)
+                        ACTION: <task> | <owner or none>   (omit if none)
+                        CHAPTER: mm:ss | <topic title> | <bullet>; <bullet>
+                            (1-2 chapters; copy mm:ss timestamps EXACTLY from the transcript)
+                        """)
+                    return try await session.respond(
+                        to: "PART \(i + 1) of \(parts.count):\n\n\(part)").content
+                }
+                partNotes.append((i, MeetingNotesFormat.parseFallback(raw)))
+            } catch {
+                continue
+            }
+        }
+        guard !partNotes.isEmpty else {
+            throw AIError.unavailable("Notes generation failed for every part of the meeting.")
+        }
+
+        // REDUCE: final synthesis over the concatenated part notes.
+        var reduceBody = ""
+        for (i, n) in partNotes {
+            reduceBody += "PART \(i + 1): \(n.summary)\n"
+            n.decisions.forEach { reduceBody += "DECISION: \($0)\n" }
+            n.openQuestions.forEach { reduceBody += "OPEN: \($0)\n" }
+            n.actionItems.forEach {
+                reduceBody += "ACTION: \($0.text) | \($0.owner ?? "none")\n"
+            }
+        }
+        reduceBody = String(reduceBody.prefix(8_000))
+
+        var notes = MeetingNotesFormat.ParsedNotes()
+        do {
+            let g = try await withTimeout {
+                let session = LanguageModelSession(instructions: """
+                    You are a meeting assistant. The input is condensed notes from
+                    consecutive parts of ONE meeting. Produce the final meeting
+                    notes, in the same language as the input. Merge duplicates;
+                    never invent facts.
+                    """)
+                return try await session.respond(
+                    to: "Produce the final meeting notes.\n\nPART NOTES:\n\(reduceBody)",
+                    generating: GeneratedNotes.self).content
+            }
+            notes.summary = g.summary
+            notes.keyPoints = g.keyPoints
+            notes.decisions = g.decisions
+            notes.openQuestions = g.openQuestions
+            notes.actionItems = g.actionItems.map { ActionItem(text: $0.text, owner: $0.owner) }
+        } catch {
+            // Degrade to stitched part notes rather than failing outright.
+            notes.summary = partNotes.map(\.notes.summary).joined(separator: " ")
+            notes.decisions = partNotes.flatMap(\.notes.decisions)
+            notes.openQuestions = partNotes.flatMap(\.notes.openQuestions)
+            notes.actionItems = partNotes.flatMap(\.notes.actionItems)
+        }
+
+        // Chapters come from the map phase — real timestamps, full coverage.
+        let rawChapters = partNotes.flatMap(\.notes.chapters)
         return Insights(
             summary: notes.summary.trimmingCharacters(in: .whitespacesAndNewlines),
             keyPoints: notes.keyPoints,

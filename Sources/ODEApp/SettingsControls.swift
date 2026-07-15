@@ -11,7 +11,7 @@ extension Text {
     }
 }
 
-func sectionLabel(_ text: String) -> some View {
+func sectionLabel(_ text: LocalizedStringKey) -> some View {
     Text(text)
         .font(.system(size: 10, weight: .semibold))
         .tracking(0.8)
@@ -22,7 +22,7 @@ func sectionLabel(_ text: String) -> some View {
 
 func settingRow<L: View, T: View>(
     icon: String,
-    hint: String? = nil,
+    hint: LocalizedStringKey? = nil,
     @ViewBuilder label: () -> L,
     @ViewBuilder trailing: () -> T
 ) -> some View {
@@ -54,7 +54,7 @@ func rowValue(_ text: String) -> some View {
 /// A subtle ⓘ ring next to a setting label; click (or hover) explains what
 /// the setting does in plain words.
 struct HintRing: View {
-    let text: String
+    let text: LocalizedStringKey
     @State private var showing = false
 
     var body: some View {

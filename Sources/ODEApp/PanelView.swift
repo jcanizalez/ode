@@ -78,6 +78,13 @@ struct PanelView: View {
                 .foregroundStyle(.white.opacity(0.65))
                 .lineLimit(1)
             Spacer()
+            Button(action: onSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+            .help("ODE Settings")
             Toggle("", isOn: Binding(get: { controller.masterOn },
                                      set: { _ in controller.toggleMaster() }))
                 .toggleStyle(.switch)
@@ -113,7 +120,7 @@ struct PanelView: View {
         }
     }
 
-    private func voiceCard(title: String, subtitle: String, icon: String,
+    private func voiceCard(title: LocalizedStringKey, subtitle: LocalizedStringKey, icon: String,
                            enabled: Bool, active: Bool, installed: Bool, level: Float,
                            toggle: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -318,16 +325,6 @@ struct PanelView: View {
                 .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-
-            Button(action: onSettings) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 46, height: 44)
-                    .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.07)))
-                    .foregroundStyle(.white.opacity(0.8))
-            }
-            .buttonStyle(.plain)
-            .help("ODE Settings")
 
             Button(action: onQuit) {
                 Image(systemName: "power")

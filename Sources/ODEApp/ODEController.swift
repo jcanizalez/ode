@@ -108,6 +108,15 @@ final class ODEController: ObservableObject {
         let aec = d.object(forKey: Keys.echoCancel) as? Bool ?? false
         echoCancelEnabled = aec
         micEngine = LiveEngine(voiceProcessing: aec)
+        if aec {
+            // Stand the voice-processing stack up NOW, off-call — the first
+            // VPIO initialization reconfigures the default-device stack, a
+            // storm that must never land at session start.
+            engineQueue.async {
+                do { try VoiceProcessingCapture.shared.prepare() }
+                catch { LiveEngine.diagnostic("[vpio] launch prepare failed: \(error.localizedDescription)") }
+            }
+        }
 
         // The virtual devices are hidden while ODE isn't running, so users
         // never see a dead device in pickers. Show them now, and keep pinging
@@ -180,8 +189,8 @@ final class ODEController: ObservableObject {
         if micEngine.sessionPeak == 0, deafFor > 10 {
             if micSilentWarning == nil {
                 micSilentWarning = echoCancelEnabled
-                    ? "ODE can't hear your mic. Echo cancellation is experimental — try turning it off in Settings → Audio."
-                    : "ODE can't hear your mic. Check System Settings → Privacy & Security → Microphone, or pick another device."
+                    ? String(localized: "ODE can't hear your mic. Echo cancellation is experimental — try turning it off in Settings → Audio.")
+                    : String(localized: "ODE can't hear your mic. Check System Settings → Privacy & Security → Microphone, or pick another device.")
             }
         } else if micEngine.sessionPeak > 0, micSilentWarning != nil {
             micSilentWarning = nil
@@ -315,8 +324,12 @@ final class ODEController: ObservableObject {
         installObservers()
         // Follow the system default where enabled: when it moved (AirPods
         // connected, dock unplugged…), swing the path to the new device.
-        if followSystemInput, let def = systemDefaultInput()?.id, def != selectedInputID {
-            selectedInputID = def
+        // With echo cancellation, capture ALWAYS follows the system default
+        // (VPIO manages its own device pair) — restart on change regardless
+        // of the follow setting so the UI and the audio agree.
+        if followSystemInput || echoCancelEnabled,
+           let def = systemDefaultInput()?.id, def != selectedInputID {
+            if followSystemInput { selectedInputID = def }
             if micActive {
                 micActive = false
                 engineQueue.async { [micEngine] in micEngine.stop() }
@@ -433,16 +446,16 @@ final class ODEController: ObservableObject {
     /// Combined status across both denoising paths for the header.
     var statusText: String {
         if !virtualMicInstalled && !virtualSpeakerInstalled {
-            return "Install ODE devices to begin"
+            return String(localized: "Install ODE devices to begin")
         }
         let anyEnabled = micEnabled || speakerEnabled
         let denoisingNow = (micActive && micEnabled) || (speakerActive && speakerEnabled)
         let passthroughNow = (micActive && !micEnabled) || (speakerActive && !speakerEnabled)
 
-        if denoisingNow { return "Removing noise" }
-        if passthroughNow { return "Passing through" }
-        if anyEnabled { return "On · waiting for a call" }
-        return "Off"
+        if denoisingNow { return String(localized: "Removing noise") }
+        if passthroughNow { return String(localized: "Passing through") }
+        if anyEnabled { return String(localized: "On · waiting for a call") }
+        return String(localized: "Off")
     }
 
     // MARK: - Device lists
@@ -526,28 +539,28 @@ final class ODEController: ObservableObject {
         NotificationCenter.default.post(name: .odeCapturePolicyChanged, object: nil)
     }
 
-    /// Toggle acoustic echo cancellation. Voice processing is fixed per
-    /// engine instance, so the mic engine is swapped for a new one (and the
-    /// path restarts immediately when mid-call).
+    /// Toggle acoustic echo cancellation. The engine reads the flag at
+    /// session start, so the path just restarts — no engine swap. Enabling
+    /// prepares the shared VPIO unit first (absorbing the device storm
+    /// before, not during, the session start).
     func toggleEchoCancel() {
         echoCancelEnabled.toggle()
         persistSettings()
+        micEngine.voiceProcessing = echoCancelEnabled
 
-        let old = micEngine
         let wasActive = micActive
         micActive = false
-        engineQueue.async { old.stop() }
-
-        let fresh = LiveEngine(voiceProcessing: echoCancelEnabled)
-        fresh.label = "mic"
-        fresh.bypassDenoise = !micEnabled
-        fresh.denoiseStrength = Float(noiseStrength)
-        fresh.onCapturedAudio = old.onCapturedAudio   // keep transcription fed
-        fresh.onConfigurationChange = { [weak self] in
-            DispatchQueue.main.async { self?.restartMicPath() }
+        let enabling = echoCancelEnabled
+        engineQueue.async { [weak self, micEngine] in
+            micEngine.stop()
+            if enabling {
+                try? VoiceProcessingCapture.shared.prepare()
+                Thread.sleep(forTimeInterval: 0.5)  // let the storm's echoes settle
+            }
+            if wasActive {
+                DispatchQueue.main.async { self?.reconcileMic() }
+            }
         }
-        micEngine = fresh
-        if wasActive { reconcileMic() }
     }
 
     /// Toggle "Speaker 1/2/…" sub-labels for remote participants. Applies to

@@ -222,6 +222,7 @@ struct MeetingsView: View {
     @ViewBuilder private var detail: some View {
         if model.viewingLive, let t = model.live {
             liveDetail(t)
+                .translationDriver(model: model) { model.live }
         } else if let t = model.selected {
             VStack(alignment: .leading, spacing: 0) {
                 detailHeader(t)
@@ -238,6 +239,7 @@ struct MeetingsView: View {
                 askBar(t)
             }
             .background(Color(white: 0.07))
+            .translationDriver(model: model) { model.selected }
         } else {
             Text("Select a meeting").foregroundStyle(.white.opacity(0.4))
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(white: 0.07))
@@ -509,9 +511,62 @@ struct MeetingsView: View {
         .padding(18)
     }
 
+    /// "Translate: Off / <language>" menu — targets come from the runtime
+    /// query of Apple's on-device translation, never a hardcoded list.
+    @ViewBuilder private var translateMenu: some View {
+        if !model.supportedTargets.isEmpty {
+            HStack(spacing: 8) {
+                Spacer()
+                if model.translating {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    Text("Translating…").font(.system(size: 11))
+                        .foregroundStyle(Color.accentColor.opacity(0.85))
+                } else if let note = model.translationNote {
+                    Text(note).font(.system(size: 10))
+                        .foregroundStyle(.orange.opacity(0.9)).lineLimit(1)
+                }
+                Menu {
+                    Button {
+                        model.captionTargetID = nil
+                    } label: {
+                        HStack {
+                            Text("Off")
+                            if model.captionTargetID == nil { Image(systemName: "checkmark") }
+                        }
+                    }
+                    Divider()
+                    ForEach(model.supportedTargets, id: \.id) { target in
+                        Button {
+                            model.captionTargetID = target.id
+                        } label: {
+                            HStack {
+                                Text(target.name)
+                                if model.captionTargetID == target.id { Image(systemName: "checkmark") }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "translate")
+                            .font(.system(size: 11))
+                        Text(model.captionTargetID.flatMap { id in
+                            model.supportedTargets.first { $0.id == id }?.name
+                        } ?? "Translate")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(model.captionTargetID == nil
+                                     ? Color.white.opacity(0.55) : Color.accentColor)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+        }
+    }
+
     @ViewBuilder private func transcriptTab(_ t: Transcript) -> some View {
         ScrollViewReader { proxy in
             VStack(alignment: .leading, spacing: 18) {
+                translateMenu
                 ForEach(t.ordered) { seg in
                     HStack(alignment: .top, spacing: 11) {
                         SpeakerAvatar(speaker: seg.speaker, size: 28)
@@ -524,6 +579,12 @@ struct MeetingsView: View {
                             }
                             Text(seg.text).font(.system(size: 14)).foregroundStyle(.white)
                                 .fixedSize(horizontal: false, vertical: true)
+                            if let translated = model.translations[seg.id], !translated.isEmpty {
+                                Text(translated).font(.system(size: 13))
+                                    .italic()
+                                    .foregroundStyle(Color.accentColor.opacity(0.9))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
@@ -710,7 +771,7 @@ struct MeetingsView: View {
 
     // MARK: - Building blocks
 
-    private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+    private func section<C: View>(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.system(size: 11, weight: .bold)).tracking(0.8).foregroundStyle(.white.opacity(0.4))
             content()
