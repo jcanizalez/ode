@@ -14,7 +14,7 @@ XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
-ODE_VERSION="${ODE_VERSION:-0.9.0}"
+ODE_VERSION="${ODE_VERSION:-0.9.1}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp
@@ -30,6 +30,16 @@ ICONSET="$(mktemp -d)/ODE.iconset"
 swift scripts/make-icon.swift "$ICONSET" >/dev/null
 iconutil -c icns "$ICONSET" -o "$RES/ODE.icns"
 rm -rf "$(dirname "$ICONSET")"
+
+# Embed Sparkle.framework (auto-updates) — the binary links it via
+# @executable_path/../Frameworks (see Package.swift linkerSettings).
+SPARKLE_FW=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [ -d "$SPARKLE_FW" ]; then
+    mkdir -p "$APP/Contents/Frameworks"
+    ditto "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
+else
+    echo "warning: Sparkle.framework not found — run 'swift build' first" >&2
+fi
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -54,6 +64,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>ODE transcribes meetings on-device so you can keep searchable notes.</string>
     <key>NSHighResolutionCapable</key> <true/>
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/jcanizalez/ode/main/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>mcpVVzfd/39nFdFxtodFvyQNRsR32Bslc5f67n6oyPw=</string>
+    <key>SUEnableAutomaticChecks</key> <true/>
 </dict>
 </plist>
 PLIST

@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Swift package dependencies (FluidAudio, Sparkle, …)
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]
+
+  # GitHub Actions used by CI and Release workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]

@@ -2,6 +2,12 @@ import SwiftUI
 import CoreAudio
 import ODEKit
 
+extension Notification.Name {
+    /// Posted when the hide-from-screen-capture setting changes so open
+    /// windows re-apply their sharing policy immediately.
+    static let odeCapturePolicyChanged = Notification.Name("odeCapturePolicyChanged")
+}
+
 /// Observable state bridging the SwiftUI panel to the ODE engine.
 ///
 /// ODE has two independent denoising paths, each gated on real device usage so
@@ -39,6 +45,9 @@ final class ODEController: ObservableObject {
     @Published var asrEngine: TranscriptionEngine = .apple
     /// Sub-label remote participants as "Speaker 1/2/…" via diarization.
     @Published var detectSpeakers = false
+    /// Exclude ODE's windows from screen sharing/recordings (you still see
+    /// them; the audience doesn't).
+    @Published var hideFromCapture = true
     /// 0...1 while an AI model is downloading, nil otherwise.
     @Published var modelDownloadProgress: Double?
 
@@ -73,6 +82,7 @@ final class ODEController: ObservableObject {
         asrEngine = d.string(forKey: Keys.asrEngine)
             .flatMap(TranscriptionEngine.init(rawValue:)) ?? .apple
         detectSpeakers = d.object(forKey: Keys.detectSpeakers) as? Bool ?? false
+        hideFromCapture = d.object(forKey: Keys.hideFromCapture) as? Bool ?? true
         let aec = d.object(forKey: Keys.echoCancel) as? Bool ?? true
         echoCancelEnabled = aec
         micEngine = LiveEngine(voiceProcessing: aec)
@@ -126,6 +136,7 @@ final class ODEController: ObservableObject {
         static let asrEngine = "ode.asrEngine"
         static let detectSpeakers = "ode.detectSpeakers"
         static let echoCancel = "ode.echoCancel"
+        static let hideFromCapture = "ode.hideFromCapture"
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
     }
@@ -138,6 +149,7 @@ final class ODEController: ObservableObject {
         d.set(asrEngine.rawValue, forKey: Keys.asrEngine)
         d.set(detectSpeakers, forKey: Keys.detectSpeakers)
         d.set(echoCancelEnabled, forKey: Keys.echoCancel)
+        d.set(hideFromCapture, forKey: Keys.hideFromCapture)
         if let u = selectedInput?.uid { d.set(u, forKey: Keys.inputUID) }
         if let u = selectedOutput?.uid { d.set(u, forKey: Keys.outputUID) }
     }
@@ -354,6 +366,13 @@ final class ODEController: ObservableObject {
         asrEngine = engine
         persistSettings()
         if engine == .parakeet { prefetchParakeetModel() }
+    }
+
+    /// Toggle whether ODE's windows are excluded from screen capture.
+    func toggleHideFromCapture() {
+        hideFromCapture.toggle()
+        persistSettings()
+        NotificationCenter.default.post(name: .odeCapturePolicyChanged, object: nil)
     }
 
     /// Toggle acoustic echo cancellation. Voice processing is fixed per

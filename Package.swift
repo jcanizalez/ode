@@ -14,6 +14,8 @@ let package = Package(
         // Parakeet TDT v3 ASR (CoreML, Apple Neural Engine) for the
         // alternative meeting-transcription engine.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.0"),
+        // Auto-updates.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
         .target(
@@ -58,8 +60,17 @@ let package = Package(
         ),
         .executableTarget(
             name: "ODEApp",
-            dependencies: ["ODEKit"],
-            path: "Sources/ODEApp"
+            dependencies: [
+                "ODEKit",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            path: "Sources/ODEApp",
+            linkerSettings: [
+                // Sparkle.framework is embedded in the app bundle by
+                // build-app.sh; resolve it relative to the executable.
+                .unsafeFlags(["-Xlinker", "-rpath",
+                              "-Xlinker", "@executable_path/../Frameworks"])
+            ]
         ),
         .testTarget(
             name: "ODEKitTests",

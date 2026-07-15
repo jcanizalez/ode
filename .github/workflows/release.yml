@@ -107,6 +107,26 @@ jobs:
           rm authkey.p8
           xcrun stapler staple "$PKG"
 
+      - name: Update appcast (auto-updates)
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          PKG="dist/ODE-${{ steps.ver.outputs.version }}.pkg"
+          SIGN=$(find .build/artifacts -path "*Sparkle/bin/sign_update" | head -1)
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > ed_key
+          SIG_ATTRS=$("$SIGN" --ed-key-file ed_key "$PKG")
+          rm -f ed_key
+          URL="https://github.com/jcanizalez/ode/releases/download/${{ steps.ver.outputs.tag }}/ODE-${{ steps.ver.outputs.version }}.pkg"
+          git fetch origin main
+          git checkout -B main origin/main
+          python3 scripts/update-appcast.py appcast.xml \
+            "${{ steps.ver.outputs.version }}" "$URL" "$SIG_ATTRS"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "appcast: v${{ steps.ver.outputs.version }}" || true
+          git push origin main
+
       - name: Create release and upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

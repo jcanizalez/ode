@@ -10,6 +10,7 @@ struct PanelView: View {
     @ObservedObject var controller: ODEController
     var onTest: () -> Void
     var onNotes: (_ showLive: Bool) -> Void
+    var onCheckUpdates: () -> Void = {}
     var onQuit: () -> Void
 
     @AppStorage("ode.panelExpanded") private var expanded = false
@@ -227,6 +228,24 @@ struct PanelView: View {
             } trailing: {
                 Toggle("", isOn: Binding(get: { controller.detectSpeakers },
                                          set: { _ in controller.toggleDetectSpeakers() }))
+                    .toggleStyle(.switch).labelsHidden().tint(.accentColor)
+                    .scaleEffect(0.85)
+            }
+            settingRow(icon: "arrow.triangle.2.circlepath",
+                       hint: "ODE checks for new versions automatically and installs them in place. Click to check right now.") {
+                Text("Check for updates").rowLabelStyle()
+            } trailing: {
+                Button { onCheckUpdates() } label: {
+                    rowValue("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                }
+                .buttonStyle(.plain)
+            }
+            settingRow(icon: "eye.slash",
+                       hint: "Keeps ODE's windows out of screen shares, recordings and screenshots — you still see them, your audience doesn't. Glance at live notes while presenting. Hotkey: ⌃⌥⌘O toggles noise cancellation from anywhere.") {
+                Text("Hide from screen sharing").rowLabelStyle()
+            } trailing: {
+                Toggle("", isOn: Binding(get: { controller.hideFromCapture },
+                                         set: { _ in controller.toggleHideFromCapture() }))
                     .toggleStyle(.switch).labelsHidden().tint(.accentColor)
                     .scaleEffect(0.85)
             }

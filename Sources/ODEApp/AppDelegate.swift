@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import AVFoundation
+import Sparkle
 import ODEKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -9,6 +10,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = ODEController()
     private var abController: ABTestWindowController?
     private var notesController: MeetingNotesWindowController?
+    private var hotKey: HotKey?
+    private var capturePolicyObserver: NSObjectProtocol?
+    /// Sparkle auto-updates (feed: appcast.xml on the repo's main branch,
+    /// updated by the release workflow).
+    private let updater = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+
+    /// Exclude (or include) a window from screen sharing per the setting.
+    private func applyCapturePolicy(_ window: NSWindow?) {
+        window?.sharingType = controller.hideFromCapture ? .none : .readOnly
+    }
+
+    private func applyCapturePolicyEverywhere() {
+        applyCapturePolicy(popover.contentViewController?.view.window)
+        applyCapturePolicy(notesController?.window)
+        applyCapturePolicy(abController?.window)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ask for microphone consent up front. If the TCC prompt instead fires
@@ -31,6 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller: controller,
             onTest: { [weak self] in self?.openABTest() },
             onNotes: { [weak self] showLive in self?.openNotes(showLive: showLive) },
+            onCheckUpdates: { [weak self] in
+                self?.popover.performClose(nil)
+                self?.updater.checkForUpdates(nil)
+            },
             onQuit: { [weak self] in self?.quit() }
         )
         let hosting = NSHostingController(rootView: panel)
@@ -44,6 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the menu-bar icon in sync with the running state.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.updateIcon()
+        }
+
+        // ⌃⌥⌘O: toggle noise cancellation from anywhere.
+        hotKey = HotKey { [weak self] in self?.controller.toggleMaster() }
+
+        // Re-apply the screen-capture policy when the setting flips.
+        capturePolicyObserver = NotificationCenter.default.addObserver(
+            forName: .odeCapturePolicyChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyCapturePolicyEverywhere()
         }
     }
 
@@ -83,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let button = statusItem.button else { return }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            applyCapturePolicy(popover.contentViewController?.view.window)
         }
     }
 
@@ -107,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         abController?.showWindow(nil)
         abController?.window?.makeKeyAndOrderFront(nil)
+        applyCapturePolicy(abController?.window)
     }
 
     private func openNotes(showLive: Bool = false) {
@@ -119,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         notesController?.showWindow(nil)
         notesController?.window?.makeKeyAndOrderFront(nil)
+        applyCapturePolicy(notesController?.window)
     }
 
     private func quit() {
