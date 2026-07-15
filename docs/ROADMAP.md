@@ -5,87 +5,57 @@ Where ODE stands and what comes next. Snapshot: July 2026.
 ODE's differentiator: **everything runs on-device.** Commercial voice tools
 typically do noise removal locally but send meetings to the cloud for
 transcription, summaries, and translation. ODE does the whole stack —
-denoise, transcribe, diarize, summarize, Q&A — without audio or text ever
-leaving the Mac.
+denoise, transcribe, diarize, summarize, translate, Q&A — without audio or
+text ever leaving the Mac.
 
 ## Shipped
 
-- **Panel redesign + identity** (v0.9.0) — status header, disclosure rows
-  with hint rings, live-aware Meetings row; "Clearing Wave" app icon and
-  menu-bar icon rendered from code; device pickers filtered to real hardware.
+- **An Ode to Tongues** (v0.11.0) — live translated captions in every Apple
+  on-device language (~20, queried at runtime; source language detected from
+  the transcript; retro-translates saved meetings); Spanish UI (String
+  Catalog, permission prompts included); map-reduce notes for long meetings;
+  echo cancellation rebuilt on a persistent VoiceProcessingIO unit, verified
+  by a real-microphone harness (`scripts/mic-e2e.sh`).
+- **An Ode to Be Heard** (v0.10.1) — dead-mic fix (echo cancellation off by
+  default until rebuilt), "System Default" device mode that follows AirPods
+  like Krisp, silent-mic panel warning, self-healing engine watchdog,
+  meeting-end grace so device switches don't split transcripts.
+- **An Ode to Order** (v0.10.0) — slim popover + sidebar Settings window;
+  noise suppression strength (live dry/wet blend); launch at login; Sparkle
+  auto-updates with signed appcast; hide-from-screen-share windows; ⌃⌥⌘O
+  hotkey; template menu-bar icon (visible on every bar); Dependabot.
+- **Panel redesign + identity** (v0.9.0) — status header, hint rings,
+  live-aware Meetings row; "Clearing Wave" app icon rendered from code;
+  device pickers filtered to real hardware.
 - **Meeting intelligence** (v0.8.0) — auto-generated notes when a meeting
   ends: timestamped chapters, decisions, open questions, action items with
   owners, mentions-of-you, speaker rename, recap email. Calendar-aware
   titles (EventKit) with AI fallback in the meeting's language; source-app
   tagging. The AI knows who "You" is from the account name.
-- Noise cancellation, both directions (DPDFNet 48 kHz full-band):
-  "Cancel my noise" (mic path) and "Cancel others' noise" (speaker path)
 - **Echo cancellation** (v0.7.0) — take calls on speakers without the remote
-  side hearing themselves or speaker audio bleeding into transcripts
+  side hearing themselves or speaker audio bleeding into transcripts.
+- Noise cancellation, both directions (DPDFNet 48 kHz full-band):
+  "Cancel my noise" (mic path) and "Cancel others' noise" (speaker path).
 - Virtual devices ("ODE Microphone" / "ODE Speaker") with dynamic hiding —
-  visible only while the app runs, watchdog-hidden if it crashes
+  visible only while the app runs, watchdog-hidden if it crashes.
 - On-device meeting transcription, two engines: Apple SpeechAnalyzer and
-  Parakeet TDT v3 (auto language ID, strong Spanish), switchable
-- Speaker diarization: remote participants become "Speaker 1/2/…"
+  Parakeet TDT v3 (auto language ID, strong Spanish), switchable.
+- Speaker diarization: remote participants become "Speaker 1/2/…".
 - Live meeting view: growing transcript + real-time Q&A about the meeting so
-  far (Apple Foundation Models); live Q&A persists with the saved transcript
-- Meeting notes: summary, key points, action items, talk-time, saved Q&A
+  far (Apple Foundation Models); live Q&A persists with the saved transcript.
 - Robustness: device hot-plug recovery, engine auto-restart, jitter-buffered
-  audio pipeline with per-session diagnostics
-- Test infrastructure without real calls (`ode fakecall`, `scripts/e2e-test.sh`,
-  engine-stats log) — see `docs/TESTING.md`
-- Developer ID signed, notarized, one-command releases via GitHub Actions
+  audio pipeline with per-session diagnostics.
+- Test infrastructure without real calls (`ode fakecall`,
+  `scripts/e2e-test.sh`, `scripts/mic-e2e.sh`, engine-stats log) — see
+  `docs/TESTING.md`.
+- Developer ID signed, notarized, one-command releases via GitHub Actions;
+  self-updating via Sparkle.
 
 ## Release plan — the next odes
 
-Each release is a themed verse; infra rides along where it fits.
-
-### v0.10.0 — *An Ode to Order* (the split)
-- **Slim popover + Settings window** — the menu-bar panel becomes a cockpit
-  (status, daily toggles, meetings); everything set-once moves to a
-  sidebar-style Settings window (General / Audio / Transcription / Updates /
-  About).
-- **Noise suppression strength** — High/Medium/Low; lower blends the original
-  signal back in for naturalness. Applies live, mid-call.
-- **Launch at login** (SMAppService).
-- **Auto-updates** (Sparkle + appcast from GitHub releases) — every release
-  after this one delivers itself. Invisible-in-screen-share windows, global
-  hotkey, Dependabot (built as the withdrawn 0.9.1 "Care").
-- **Menu-bar icon fix** — template rendering so it's visible on every bar;
-  panel responsiveness fixes.
-- Backlog: Liquid-Glass layered .icon via actool (icns fallback kept).
-
-### v0.10.1 — patch (the microphone's mea culpa)
-- **Fix dead mic** — echo cancellation (VPIO) has captured pure silence since
-  the 0.8.0 engine-lifecycle rework. It now defaults OFF (existing installs
-  migrated once) and is labeled experimental until the voice-processing path
-  is rebuilt. AirPods/headsets do their own AEC and lose nothing.
-- **"System Default" device option** — pickers gain a System Default entry
-  (the default): ODE follows the system input/output as it changes, so
-  connecting AirPods auto-switches like Krisp. Explicit device pinning stays
-  available.
-- **Silent-mic detection** — mic path active but capturing zeros for ~10 s →
-  orange panel warning naming the likely fix.
-- Backlog: **VPIO rearchitecture** — one persistent voice-processing capture
-  engine reused across sessions (fresh-engines-per-session conflicts with
-  VPIO: dormant instances silence capture, per-session activation storms the
-  device stack). Needs a dedicated harness with real-mic assertions.
-
-### v0.11.0 — *An Ode to Tongues* (languages + the voice-processing debt)
-- **Live translated captions** — Apple's on-device Translation over the live
-  segment stream. ALL supported languages (~20), queried at runtime — never
-  hardcoded; per-line source detection so bilingual meetings translate each
-  line from its own language. Works retroactively on any saved meeting.
-- **Spanish UI localization** — String Catalog (129 strings), permission
-  prompts included; more UI languages become data changes.
-- **Map-reduce notes** — chapter-quality summaries for 2-hour meetings
-  (chunk → per-part condensed notes with real timestamps → one synthesis).
-- **Echo cancellation rebuilt** — persistent raw VoiceProcessingIO unit
-  (initialize once at launch; start/stop per session; mic released between
-  calls). The -10875 root cause: client format must be set on BOTH buses.
-  Verified by scripts/mic-e2e.sh (both EC modes × two sessions). Still
-  default-off + EXPERIMENTAL until ~20 consecutive harness passes.
-- Polish: gear moved from the popover footer to the header.
+Each release is a themed verse; infra rides along where it fits. The
+proactive features keep ODE's stance: on-device by default, cloud only by
+explicit per-question opt-in.
 
 ### v0.12.0 — *An Ode to Presence* (proactive, part 1)
 - **Name-mention alerts** — someone says your name → notification with the
@@ -120,21 +90,11 @@ Everything above proven in daily use, plus whichever research item matured:
 - **Accent conversion / speech-to-speech translation** — revisit as
   ANE-native generative speech models mature.
 
-## Proactive ODE (Glass-inspired)
+## Backlog (rides along when it fits)
 
-Today ODE listens and remembers; the next leap is *acting in the moment* —
-inspired by Glass/CheatingDaddy-style assistants, but with ODE's stance:
-on-device by default, cloud only by explicit opt-in.
-
-- **Name-mention alerts** — we already detect "Javier" in live segments;
-  surface a notification with the last sentence and one-click jump into the
-  live view. (Cheapest win — the plumbing exists.)
-- **Suggested answers** — when a question is directed at you, draft a reply
-  from the meeting context using the on-device model, shown in the live view.
-- **Screen context** — ScreenCaptureKit + Apple Vision OCR (all local) so
-  "Ask" can ground answers in what's on screen, not just what was said.
-- **Claude escalation** — an opt-in "advanced answers" mode that sends the
-  question + minimal context to the Claude API (or another provider) for
-  deep reasoning; clearly indicated, per-question, never automatic.
-- **Invisible windows** — NSWindow.sharingType = .none so ODE's panels never
-  appear in screen shares or recordings (one-liner, do it early).
+- **Flip echo cancellation default-on** and drop the EXPERIMENTAL badge once
+  `scripts/mic-e2e.sh` accumulates ~20 consecutive passes across device
+  configurations.
+- **More UI languages** — the String Catalog makes each one a translation
+  pass, not a code change.
+- **Liquid-Glass layered .icon** via actool (icns fallback kept).
