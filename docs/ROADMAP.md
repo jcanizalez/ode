@@ -10,6 +10,14 @@ text ever leaving the Mac.
 
 ## Shipped
 
+- **An Ode to Craft** (v0.12.0) — Studio Voice: a real broadcast chain on the
+  mic path (steep high-pass, mud cut, warmth/presence/air EQ, loudness AGC,
+  room-taming downward expander, 3-band compressor with integrated de-esser,
+  tape saturation, peak limiter — zero latency, on-device), with an A/B
+  switch in the test window; call recording (both sides mixed into one AAC
+  next to the transcript, playable from the Meetings window); speaking
+  analytics tab (pace, talk share, fillers in EN/ES, longest monologues
+  with jump links).
 - **An Ode to Tongues** (v0.11.0) — live translated captions in every Apple
   on-device language (~20, queried at runtime; source language detected from
   the transcript; retro-translates saved meetings); Spanish UI (String
@@ -57,15 +65,7 @@ Each release is a themed verse; infra rides along where it fits. The
 proactive features keep ODE's stance: on-device by default, cloud only by
 explicit per-question opt-in.
 
-### v0.12.0 — *An Ode to Craft* (the voice itself — in progress)
-- **Studio Voice** — pro-mic DSP chain (high-pass, warmth, presence,
-  compressor, limiter). Most of "podcast voice" is EQ + dynamics, not AI.
-- **Call recording** — optionally keep the call's audio (both sides, mixed,
-  denoised) next to its transcript, playable from the Meetings window.
-- **Speaking analytics** — fillers/WPM/monologues from stored transcripts,
-  in a new Analytics tab.
-
-### v0.13.0 — *An Ode to Presence* (proactive, part 1)
+### v0.13.0 — *An Ode to Presence* (proactive, part 1 — next)
 - **Name-mention alerts** — someone says your name → notification with the
   sentence + one-click into the live view (mentions plumbing already exists).
 - **Suggested answers** — a question lands on you → the live view drafts a
@@ -94,9 +94,17 @@ Everything above proven in daily use, plus whichever research item matured:
 
 ## Backlog (rides along when it fits)
 
+- **Dereverberation model spike** — the expander dries the room *between*
+  words; reverb *during* speech needs a model. Evaluate the streaming
+  GTCRN enhancement already in the vendored sherpa-onnx and DeepFilterNet3
+  against the current denoiser on reverberant speech.
+- **"Enhance recording" (offline)** — run a heavier restoration model over
+  saved call recordings, where real-time doesn't constrain quality.
+- **Studio Voice intensity setting** — Low/Medium/High preset on the
+  broadcast chain if one fixed character doesn't fit every voice.
 - **Flip echo cancellation default-on** and drop the EXPERIMENTAL badge once
   `scripts/mic-e2e.sh` accumulates ~20 consecutive passes across device
-  configurations.
+  configurations (3 so far).
 - **More UI languages** — the String Catalog makes each one a translation
   pass, not a code change.
 - **Liquid-Glass layered .icon** via actool (icns fallback kept).
