@@ -17,8 +17,8 @@ text ever leaving the Mac.
   echo cancellation rebuilt on a persistent VoiceProcessingIO unit, verified
   by a real-microphone harness (`scripts/mic-e2e.sh`).
 - **An Ode to Be Heard** (v0.10.1) — dead-mic fix (echo cancellation off by
-  default until rebuilt), "System Default" device mode that follows AirPods
-  like Krisp, silent-mic panel warning, self-healing engine watchdog,
+  default until rebuilt), "System Default" device mode that follows the
+  system as AirPods connect, silent-mic panel warning, self-healing engine watchdog,
   meeting-end grace so device switches don't split transcripts.
 - **An Ode to Order** (v0.10.0) — slim popover + sidebar Settings window;
   noise suppression strength (live dry/wet blend); launch at login; Sparkle
@@ -57,31 +57,33 @@ Each release is a themed verse; infra rides along where it fits. The
 proactive features keep ODE's stance: on-device by default, cloud only by
 explicit per-question opt-in.
 
-### v0.12.0 — *An Ode to Presence* (proactive, part 1)
+### v0.12.0 — *An Ode to Craft* (the voice itself — in progress)
+- **Studio Voice** — pro-mic DSP chain (high-pass, warmth, presence,
+  compressor, limiter). Most of "podcast voice" is EQ + dynamics, not AI.
+- **Call recording** — optionally keep the call's audio (both sides, mixed,
+  denoised) next to its transcript, playable from the Meetings window.
+- **Speaking analytics** — fillers/WPM/monologues from stored transcripts,
+  in a new Analytics tab.
+
+### v0.13.0 — *An Ode to Presence* (proactive, part 1)
 - **Name-mention alerts** — someone says your name → notification with the
   sentence + one-click into the live view (mentions plumbing already exists).
 - **Suggested answers** — a question lands on you → the live view drafts a
   reply from meeting context, on-device.
 
-### v0.13.0 — *An Ode to Counsel* (proactive, part 2)
+### v0.14.0 — *An Ode to Counsel* (proactive, part 2)
 - **Screen context** — ScreenCaptureKit + Apple Vision OCR (fully local) so
   Ask grounds answers in what's on screen, not just what was said.
 - **Claude escalation** — explicit "Ask with Claude" for hard questions:
   question + minimal context to the Claude API, per-question, clearly
   badged, never automatic. On-device remains the default.
 
-### v0.14.0 — *An Ode to Names* (knowledge)
+### v0.15.0 — *An Ode to Names* (knowledge)
 - **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`:
   "Javier:" instead of "Speaker 1:".
 - **Cross-meeting Q&A** — ask across the whole transcript store.
 - **Action-item export** — owners' tasks to Reminders / Markdown clipboard.
 - **Microsoft Graph calendar connector** (opt-in) for Outlook-only setups.
-
-### v0.15.0 — *An Ode to Craft* (the voice itself)
-- **Studio Voice** — pro-mic DSP chain (high-pass, warmth, presence,
-  compressor, limiter). Most of "podcast voice" is EQ + dynamics, not AI.
-- **Call recording** — optionally keep denoised audio next to transcripts.
-- **Speaking analytics** — fillers/WPM/monologues from stored transcripts.
 
 ### v1.0.0 — *An Ode to Voice* (the milestone)
 Everything above proven in daily use, plus whichever research item matured:

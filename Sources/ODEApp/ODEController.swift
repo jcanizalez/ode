@@ -52,6 +52,12 @@ final class ODEController: ObservableObject {
     /// How much noise to remove, 0...1 (1 = everything; lower keeps voices
     /// more natural by blending the original signal back in).
     @Published var noiseStrength: Double = 1
+    /// "Studio Voice" polish on the mic path: high-pass, warmth/presence EQ,
+    /// gentle compression and a peak limiter — applied after noise removal.
+    @Published var studioVoiceEnabled = false
+    /// Save each meeting's audio (both directions, mixed) next to its
+    /// transcript. Applies from the next meeting.
+    @Published var recordMeetingAudio = false
     /// Follow the system default input/output as it changes (AirPods connect
     /// → ODE switches with the system), instead of pinning a device.
     @Published var followSystemInput = true
@@ -86,6 +92,10 @@ final class ODEController: ObservableObject {
     private var visibilityTimer: Timer?
 
     private var meetingTranscriber: Any?  // MeetingTranscriber (macOS 26+)
+    /// Records the current meeting's audio when the setting is on. Lives and
+    /// dies with the meeting (created in startTranscription, finalized in the
+    /// stop/finish paths); survives engine blips like the transcriber does.
+    private var callRecorder: CallRecorder?
 
     init() {
         // Restore persisted settings before wiring anything up.
@@ -152,6 +162,9 @@ final class ODEController: ObservableObject {
         noiseStrength = d.object(forKey: Keys.noiseStrength) as? Double ?? 1
         micEngine.denoiseStrength = Float(noiseStrength)
         speakerEngine.denoiseStrength = Float(noiseStrength)
+        studioVoiceEnabled = d.object(forKey: Keys.studioVoice) as? Bool ?? false
+        micEngine.studioVoice = studioVoiceEnabled  // mic only: polish YOUR voice
+        recordMeetingAudio = d.object(forKey: Keys.recordMeetingAudio) as? Bool ?? false
         launchAtLogin = SMAppService.mainApp.status == .enabled
 
         installObservers()
@@ -211,6 +224,8 @@ final class ODEController: ObservableObject {
         static let inputUID = "ode.inputUID"
         static let outputUID = "ode.outputUID"
         static let noiseStrength = "ode.noiseStrength"
+        static let studioVoice = "ode.studioVoice"
+        static let recordMeetingAudio = "ode.recordMeetingAudio"
     }
 
     /// Sentinel stored in place of a device UID when following the system default.
@@ -226,6 +241,8 @@ final class ODEController: ObservableObject {
         d.set(echoCancelEnabled, forKey: Keys.echoCancel)
         d.set(hideFromCapture, forKey: Keys.hideFromCapture)
         d.set(noiseStrength, forKey: Keys.noiseStrength)
+        d.set(studioVoiceEnabled, forKey: Keys.studioVoice)
+        d.set(recordMeetingAudio, forKey: Keys.recordMeetingAudio)
         if followSystemInput {
             d.set(Self.systemDefaultUID, forKey: Keys.inputUID)
         } else if let u = selectedInput?.uid {
@@ -517,6 +534,21 @@ final class ODEController: ObservableObject {
         persistSettings()
     }
 
+    /// Toggle Studio Voice (mic path only — the polish is for YOUR voice,
+    /// never for what others send). Applies live mid-session.
+    func toggleStudioVoice() {
+        studioVoiceEnabled.toggle()
+        micEngine.studioVoice = studioVoiceEnabled
+        persistSettings()
+    }
+
+    /// Toggle meeting-audio recording. Takes effect at the next meeting —
+    /// a recording that didn't start with its call would be misleading.
+    func toggleRecordMeetingAudio() {
+        recordMeetingAudio.toggle()
+        persistSettings()
+    }
+
     /// Register/unregister ODE as a login item, then reflect the service's
     /// real status (registration can fail silently for unsigned builds).
     func toggleLaunchAtLogin() {
@@ -771,10 +803,39 @@ final class ODEController: ObservableObject {
         transcribing = false
         micEngine.onCapturedAudio = nil
         speakerEngine.onCapturedAudio = nil
+        micEngine.onProcessedAudio = nil
+        speakerEngine.onProcessedAudio = nil
+        let recorder = callRecorder
+        callRecorder = nil
         meetingTranscriber = nil
         Task {
-            await mt.finishAndSave()
+            let saved = await mt.finishAndSave()
+            if let recorder, var t = saved,
+               let file = Self.attachRecording(recorder, to: t) {
+                t.recordingFile = file
+                TranscriptStore.shared.save(t)
+            }
             completion()
+        }
+    }
+
+    /// Finalize a call recording and move it to its transcript's sidecar name
+    /// (`<stem>.m4a`, next to the .json/.txt). Returns the relative filename
+    /// to store, or nil when nothing was recorded or the move failed.
+    private static func attachRecording(_ recorder: CallRecorder,
+                                        to t: Transcript) -> String? {
+        guard let temp = recorder.finish() else { return nil }
+        let store = TranscriptStore.shared
+        let name = store.fileStem(for: t) + ".m4a"
+        let dest = store.directory.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try FileManager.default.moveItem(at: temp, to: dest)
+            return name
+        } catch {
+            LiveEngine.diagnostic("[recorder] attach failed: \(error.localizedDescription)")
+            try? FileManager.default.removeItem(at: temp)
+            return nil
         }
     }
 
@@ -849,6 +910,10 @@ final class ODEController: ObservableObject {
                 // re-wire the audio feeds to the SAME meeting.
                 micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
                 speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
+                if let rec = callRecorder {
+                    micEngine.onProcessedAudio = { [weak rec] in rec?.feedMic($0) }
+                    speakerEngine.onProcessedAudio = { [weak rec] in rec?.feedOthers($0) }
+                }
             }
         } else if transcribing && pendingTranscriptionStop == nil {
             let work = DispatchWorkItem { [weak self] in
@@ -890,6 +955,21 @@ final class ODEController: ObservableObject {
         micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
         speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
 
+        // Opt-in call recording: the PROCESSED streams (what the call hears),
+        // to a temp name until the transcript's file stem exists at save.
+        if recordMeetingAudio {
+            let tempURL = TranscriptStore.shared.directory
+                .appendingPathComponent("recording-\(UUID().uuidString).m4a")
+            do {
+                let rec = try CallRecorder(url: tempURL)
+                callRecorder = rec
+                micEngine.onProcessedAudio = { [weak rec] in rec?.feedMic($0) }
+                speakerEngine.onProcessedAudio = { [weak rec] in rec?.feedOthers($0) }
+            } catch {
+                LiveEngine.diagnostic("[recorder] start failed: \(error.localizedDescription)")
+            }
+        }
+
         Task {
             do {
                 try await MeetingTranscriber.ensureModel(engine: engine, detectSpeakers: diarize)
@@ -914,11 +994,30 @@ final class ODEController: ObservableObject {
         transcribing = false
         micEngine.onCapturedAudio = nil
         speakerEngine.onCapturedAudio = nil
-        guard let mt = meetingTranscriber as? MeetingTranscriber else { return }
+        micEngine.onProcessedAudio = nil
+        speakerEngine.onProcessedAudio = nil
+        let recorder = callRecorder
+        callRecorder = nil
+        guard let mt = meetingTranscriber as? MeetingTranscriber else {
+            // No meeting to attach to — don't keep orphaned audio around.
+            if let recorder, let url = recorder.finish() {
+                try? FileManager.default.removeItem(at: url)
+            }
+            return
+        }
         meetingTranscriber = nil
         let name = userFirstName
         Task {
-            let saved = await mt.finishAndSave()
+            var saved = await mt.finishAndSave()
+            // Attach the recording BEFORE summarizing — the audio must be
+            // reachable even when the AI step fails.
+            if let recorder, var t = saved {
+                if let file = Self.attachRecording(recorder, to: t) {
+                    t.recordingFile = file
+                    TranscriptStore.shared.save(t)
+                    saved = t
+                }
+            }
             await MainActor.run { self.objectWillChange.send() }
             // Auto-summarize: the notes are ready when the user opens them,
             // no button needed. Additive — failure leaves the raw transcript.

@@ -222,6 +222,12 @@ struct SettingsView: View {
                 } trailing: {
                     settingToggle(isOn: controller.echoCancelEnabled) { controller.toggleEchoCancel() }
                 }
+                settingRow(icon: "music.mic",
+                           hint: "High-pass, warmth and presence EQ, gentle compression and a safety limiter — applied to your mic after noise removal, on-device. One broadcast-ready preset; flips instantly, even mid-call.") {
+                    Text("Studio Voice").rowLabelStyle()
+                } trailing: {
+                    settingToggle(isOn: controller.studioVoiceEnabled) { controller.toggleStudioVoice() }
+                }
                 settingRow(icon: "dial.medium",
                            hint: "How much noise to remove. Lower keeps voices more natural by blending some of the original sound back in. Applies instantly, even mid-call.") {
                     Text("Noise suppression strength").rowLabelStyle()
@@ -291,6 +297,12 @@ struct SettingsView: View {
                 Text("Detect speakers").rowLabelStyle()
             } trailing: {
                 settingToggle(isOn: controller.detectSpeakers) { controller.toggleDetectSpeakers() }
+            }
+            settingRow(icon: "record.circle",
+                       hint: "Saves each meeting's audio (both sides, denoised) next to its transcript — on this Mac only, never uploaded. Applies from the next meeting. Recording laws vary; let participants know.") {
+                Text("Record meeting audio").rowLabelStyle()
+            } trailing: {
+                settingToggle(isOn: controller.recordMeetingAudio) { controller.toggleRecordMeetingAudio() }
             }
             settingRow(icon: "person.crop.circle",
                        hint: "Who \"You\" is in meeting notes — used for \"Mentions of you\" and so notes say your name instead of \"You\". Defaults to your macOS account name.") {

@@ -1,15 +1,18 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import ODEKit
 
 /// Drives the Meetings window: loading, filtering, grouping, AI generation.
 @MainActor
 final class MeetingsModel: ObservableObject {
     enum Filter { case all, starred }
-    enum Tab { case summary, transcript, actions }
+    enum Tab { case summary, transcript, actions, analytics }
 
     @Published var transcripts: [Transcript] = []
-    @Published var selectedID: Transcript.ID?
+    @Published var selectedID: Transcript.ID? {
+        didSet { if oldValue != selectedID { stopPlayback() } }
+    }
     @Published var search = ""
     @Published var filter: Filter = .all
     @Published var tab: Tab = .summary
@@ -42,6 +45,46 @@ final class MeetingsModel: ObservableObject {
     @Published var translationNote: String?
     /// True while captions are being generated for pending segments.
     @Published var translating = false
+
+    // MARK: - Recording playback (call audio saved next to the transcript)
+
+    @Published var playingRecording = false
+    private var player: AVAudioPlayer?
+    private let playerDelegate = PlayerFinishDelegate()
+
+    /// URL of the selected meeting's recording, nil when there is none.
+    func recordingURL(for t: Transcript) -> URL? {
+        TranscriptStore.shared.recordingURL(for: t)
+    }
+
+    func togglePlayback(_ t: Transcript) {
+        if playingRecording { stopPlayback(); return }
+        guard let url = recordingURL(for: t) else { return }
+        player = try? AVAudioPlayer(contentsOf: url)
+        playerDelegate.onFinish = { [weak self] in
+            Task { @MainActor in self?.stopPlayback() }
+        }
+        player?.delegate = playerDelegate
+        player?.play()
+        playingRecording = player?.isPlaying ?? false
+    }
+
+    func stopPlayback() {
+        player?.stop()
+        player = nil
+        playingRecording = false
+    }
+
+    // MARK: - Speaking analytics (computed on demand, cached per meeting)
+
+    private var analyticsCache: [Transcript.ID: SpeakingAnalytics] = [:]
+
+    func analytics(for t: Transcript) -> SpeakingAnalytics {
+        if let cached = analyticsCache[t.id] { return cached }
+        let a = SpeakingAnalytics.compute(for: t)
+        analyticsCache[t.id] = a
+        return a
+    }
 
     /// Name used for "Mentions of you" (first name). Override via defaults.
     var userFirstName: String {
@@ -289,5 +332,15 @@ final class MeetingsModel: ObservableObject {
         if let i = transcripts.firstIndex(where: { $0.id == t.id }) {
             transcripts[i] = t
         }
+        analyticsCache[t.id] = nil  // speaker renames change the stats
+    }
+}
+
+/// AVAudioPlayer's finish callback needs an NSObject delegate; the model
+/// isn't one, so this tiny adapter forwards the event.
+private final class PlayerFinishDelegate: NSObject, AVAudioPlayerDelegate {
+    var onFinish: () -> Void = {}
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onFinish()
     }
 }

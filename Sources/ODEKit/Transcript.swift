@@ -74,6 +74,9 @@ public struct Transcript: Codable, Identifiable {
     public var openQuestions: [String]?
     public var chapters: [Chapter]?
     public var chat: [ChatMessage] = []    // saved Ask-anything Q&A history
+    /// Audio recording of the call, as a filename RELATIVE to the transcript
+    /// store directory (the store can move; absolute paths go stale).
+    public var recordingFile: String?
 
     public init(id: UUID = UUID(), title: String, startedAt: Date, endedAt: Date,
                 segments: [TranscriptSegment], sourceApp: String? = nil,
@@ -82,7 +85,8 @@ public struct Transcript: Codable, Identifiable {
                 keyPoints: [String]? = nil, actionItems: [ActionItem]? = nil,
                 decisions: [String]? = nil, openQuestions: [String]? = nil,
                 chapters: [Chapter]? = nil,
-                chat: [ChatMessage] = []) {
+                chat: [ChatMessage] = [],
+                recordingFile: String? = nil) {
         self.id = id
         self.title = title
         self.startedAt = startedAt
@@ -98,6 +102,7 @@ public struct Transcript: Codable, Identifiable {
         self.openQuestions = openQuestions
         self.chapters = chapters
         self.chat = chat
+        self.recordingFile = recordingFile
     }
 
     // MARK: - Codable migration
@@ -105,7 +110,7 @@ public struct Transcript: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, title, startedAt, endedAt, segments, sourceApp, attendees,
              starred, summary, keyPoints, actionItems, decisions,
-             openQuestions, chapters, chat
+             openQuestions, chapters, chat, recordingFile
     }
 
     /// Custom decode so transcripts saved by older versions still load:
@@ -127,6 +132,7 @@ public struct Transcript: Codable, Identifiable {
         openQuestions = try c.decodeIfPresent([String].self, forKey: .openQuestions)
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters)
         chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
+        recordingFile = try c.decodeIfPresent(String.self, forKey: .recordingFile)
         if let items = try? c.decodeIfPresent([ActionItem].self, forKey: .actionItems) {
             actionItems = items
         } else if let legacy = try? c.decodeIfPresent([String].self, forKey: .actionItems) {
@@ -295,9 +301,21 @@ public final class TranscriptStore {
         let base = directory.appendingPathComponent(fileStem(for: transcript))
         try? FileManager.default.removeItem(at: base.appendingPathExtension("json"))
         try? FileManager.default.removeItem(at: base.appendingPathExtension("txt"))
+        if let url = recordingURL(for: transcript) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
-    private func fileStem(for t: Transcript) -> String {
+    /// Absolute URL of the call recording, nil when the meeting has none or
+    /// the file has since disappeared.
+    public func recordingURL(for t: Transcript) -> URL? {
+        guard let name = t.recordingFile else { return nil }
+        let url = directory.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Shared basename for a transcript's sidecar files (.json/.txt/.m4a).
+    public func fileStem(for t: Transcript) -> String {
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd_HHmmss"
         return "\(df.string(from: t.startedAt))_\(t.id.uuidString.prefix(8))"

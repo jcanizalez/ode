@@ -111,6 +111,23 @@ struct ABTestView: View {
                     .foregroundStyle(model.useDenoised ? .white : .white.opacity(0.4))
             }
 
+            // Studio Voice on top of either side — same composition as live.
+            HStack(spacing: 8) {
+                Image(systemName: "music.mic")
+                    .font(.system(size: 12))
+                    .foregroundStyle(model.useStudio ? Color.accentColor : .white.opacity(0.4))
+                Text("Studio Voice")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(model.useStudio ? .white : .white.opacity(0.5))
+                Toggle("", isOn: Binding(
+                    get: { model.useStudio },
+                    set: { model.setUseStudio($0) }))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .tint(.accentColor)
+            }
+
             bigCircleButton(system: model.isPlaying ? "pause.fill" : "play.fill",
                             tint: .white) {
                 model.togglePlay()

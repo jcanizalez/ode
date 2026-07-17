@@ -207,6 +207,21 @@ public final class LiveEngine {
     /// Dry/wet blender for partial strength. Touched only on processQueue.
     private let mixer = DryWetMixer()
 
+    /// "Studio Voice" polish (EQ + compression + limiter), applied as the
+    /// last stage before playback. Flippable live, same pattern as
+    /// bypassDenoise.
+    private var studioVoiceLock = os_unfair_lock()
+    private var _studioVoice = false
+    public var studioVoice: Bool {
+        get { os_unfair_lock_lock(&studioVoiceLock); defer { os_unfair_lock_unlock(&studioVoiceLock) }; return _studioVoice }
+        set { os_unfair_lock_lock(&studioVoiceLock); _studioVoice = newValue; os_unfair_lock_unlock(&studioVoiceLock) }
+    }
+    /// The polish chain itself. Touched only on processQueue.
+    private let voice = StudioVoice()
+    /// Tracks off→on transitions (processQueue only) so every enable starts
+    /// from clean DSP state instead of stale filter memory.
+    private var voicePrimed = false
+
     /// Whether Apple's voice processing (acoustic echo cancellation against
     /// the system output) is applied to the capture side. Read at start();
     /// settable so the owner can flip echo cancellation without swapping
@@ -230,6 +245,17 @@ public final class LiveEngine {
     public var onCapturedAudio: ((AVAudioPCMBuffer) -> Void)? {
         get { os_unfair_lock_lock(&capturedSinkLock); defer { os_unfair_lock_unlock(&capturedSinkLock) }; return _onCapturedAudio }
         set { os_unfair_lock_lock(&capturedSinkLock); _onCapturedAudio = newValue; os_unfair_lock_unlock(&capturedSinkLock) }
+    }
+
+    /// Optional sink for the FINAL processed samples (post-denoise,
+    /// post-Studio-Voice — exactly what the ring plays to the other side),
+    /// 48 kHz mono. Used for call recording. Invoked on the serial
+    /// processing queue; keep the closure cheap or hop queues inside it.
+    private var processedSinkLock = os_unfair_lock()
+    private var _onProcessedAudio: (([Float]) -> Void)?
+    public var onProcessedAudio: (([Float]) -> Void)? {
+        get { os_unfair_lock_lock(&processedSinkLock); defer { os_unfair_lock_unlock(&processedSinkLock) }; return _onProcessedAudio }
+        set { os_unfair_lock_lock(&processedSinkLock); _onProcessedAudio = newValue; os_unfair_lock_unlock(&processedSinkLock) }
     }
 
     /// Called (on an arbitrary thread) when either engine stops itself because
@@ -320,6 +346,7 @@ public final class LiveEngine {
         ring.reset()
         denoiser.resetStreaming()
         mixer.reset()
+        voice.reset()
         os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
 
         // Playback engine is fresh every session; capture is either a fresh
@@ -436,8 +463,9 @@ public final class LiveEngine {
             guard let self else { return }
             if self.bypassDenoise {
                 // Pass audio through untouched so the call still hears you,
-                // just without noise removal.
-                self.ring.write(mono)
+                // just without noise removal. Studio Voice still applies —
+                // the two toggles compose independently.
+                self.emit(mono)
             } else {
                 let s = self.denoiseStrength
                 // At full strength the FIFO must stay empty, or dry samples
@@ -446,11 +474,26 @@ public final class LiveEngine {
                 if s < 0.999 { self.mixer.feed(dry: mono) } else { self.mixer.reset() }
                 let clean = self.denoiser.processStreaming(mono)
                 if !clean.isEmpty {
-                    self.ring.write(s < 0.999 ? self.mixer.mix(wet: clean, strength: s)
-                                              : clean)
+                    self.emit(s < 0.999 ? self.mixer.mix(wet: clean, strength: s)
+                                        : clean)
                 }
             }
         }
+    }
+
+    /// Final hop for processed samples (processQueue only): Studio Voice
+    /// polish when enabled, then the ring for playback plus the optional
+    /// processed-audio sink (call recording).
+    private func emit(_ samples: [Float]) {
+        var out = samples
+        if studioVoice {
+            if !voicePrimed { voice.reset(); voicePrimed = true }
+            out = voice.process(out)
+        } else {
+            voicePrimed = false
+        }
+        ring.write(out)
+        onProcessedAudio?(out)
     }
 
     public func stop() {
@@ -514,6 +557,7 @@ public final class LiveEngine {
         _ = denoiser.flushStreaming()
         denoiser.resetStreaming()
         mixer.reset()
+        voice.reset()
         playbackEngine?.stop()
         sourceNode = nil
         captureEngine = nil

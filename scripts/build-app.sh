@@ -14,7 +14,7 @@ XCODE="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)"
 APP="dist/ODE.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
-ODE_VERSION="${ODE_VERSION:-0.11.0}"
+ODE_VERSION="${ODE_VERSION:-0.12.0}"
 
 echo "Building release binary…"
 swift build -c release --product ODEApp

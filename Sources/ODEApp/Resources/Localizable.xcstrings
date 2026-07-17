@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%d wpm": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d ppm"
+          }
+        }
+      }
+    },
+    "%d%% of talk time": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d %% del tiempo de conversación"
+          }
+        }
+      }
+    },
     "AI SUMMARY": {
       "localizations": {
         "es": {
@@ -61,6 +81,16 @@
         }
       }
     },
+    "Analytics": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Analítica"
+          }
+        }
+      }
+    },
     "Ask about the meeting so far…": {
       "localizations": {
         "es": {
@@ -87,6 +117,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Audio"
+          }
+        }
+      }
+    },
+    "BY SPEAKER": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "POR HABLANTE"
           }
         }
       }
@@ -181,6 +221,16 @@
         }
       }
     },
+    "Counted on-device from the transcript. Filler words are a heuristic — a trend to watch, not a verdict.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calculado en tu Mac a partir de la transcripción. Las muletillas son una heurística: una tendencia a observar, no un veredicto."
+          }
+        }
+      }
+    },
     "Current version": {
       "localizations": {
         "es": {
@@ -261,6 +311,16 @@
         }
       }
     },
+    "Duration": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Duración"
+          }
+        }
+      }
+    },
     "EXPERIMENTAL": {
       "localizations": {
         "es": {
@@ -297,6 +357,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Experimental: puede dejar tu micrófono en silencio; déjalo desactivado salvo para pruebas. Evita que tu micrófono recapture el sonido de los altavoces. Los AirPods y la mayoría de los auriculares ya cancelan el eco por su cuenta."
+          }
+        }
+      }
+    },
+    "Fillers": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muletillas"
           }
         }
       }
@@ -351,6 +421,16 @@
         }
       }
     },
+    "High-pass, warmth and presence EQ, gentle compression and a safety limiter — applied to your mic after noise removal, on-device. One broadcast-ready preset; flips instantly, even mid-call.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filtro paso alto, EQ de calidez y presencia, compresión suave y un limitador de seguridad, aplicados a tu micrófono después de eliminar el ruido, en tu Mac. Un solo preajuste listo para el aire; cambia al instante, incluso en plena llamada."
+          }
+        }
+      }
+    },
     "How ODE lives on your Mac.": {
       "localizations": {
         "es": {
@@ -397,6 +477,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Interactividad"
+          }
+        }
+      }
+    },
+    "Jump": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ir"
           }
         }
       }
@@ -477,6 +567,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Escuchando…"
+          }
+        }
+      }
+    },
+    "Longest monologue: %@ at %@": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Monólogo más largo: %@ en %@"
           }
         }
       }
@@ -811,12 +911,32 @@
         }
       }
     },
+    "Pace": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ritmo"
+          }
+        }
+      }
+    },
     "Passing through": {
       "localizations": {
         "es": {
           "stringUnit": {
             "state": "translated",
             "value": "Dejando pasar el audio"
+          }
+        }
+      }
+    },
+    "Play call recording": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reproducir la grabación de la llamada"
           }
         }
       }
@@ -911,6 +1031,16 @@
         }
       }
     },
+    "Record meeting audio": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabar el audio de las reuniones"
+          }
+        }
+      }
+    },
     "Recording": {
       "localizations": {
         "es": {
@@ -957,6 +1087,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Renombrar a %@"
+          }
+        }
+      }
+    },
+    "Saves each meeting's audio (both sides, denoised) next to its transcript — on this Mac only, never uploaded. Applies from the next meeting. Recording laws vary; let participants know.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarda el audio de cada reunión (ambos lados, sin ruido) junto a su transcripción, solo en este Mac; nunca se sube. Se aplica a partir de la próxima reunión. Las leyes de grabación varían; avisa a los participantes."
           }
         }
       }
@@ -1047,6 +1187,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Abre ODE automáticamente al iniciar sesión, para que los dispositivos virtuales estén listos antes de tu primera llamada."
+          }
+        }
+      }
+    },
+    "Stop playback": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detener la reproducción"
+          }
+        }
+      }
+    },
+    "Studio Voice": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voz de estudio"
           }
         }
       }
@@ -1287,6 +1447,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Quién es «Tú» en las notas de reunión: se usa para «Menciones de ti» y para que las notas digan tu nombre. Por defecto, el nombre de tu cuenta de macOS."
+          }
+        }
+      }
+    },
+    "Words": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Palabras"
           }
         }
       }

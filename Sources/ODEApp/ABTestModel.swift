@@ -11,6 +11,7 @@ final class ABTestModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var elapsed: TimeInterval = 0
     @Published var useDenoised = true       // the Off/On switch (On = with ODE)
+    @Published var useStudio = false        // Studio Voice on top (either side)
     @Published var isPlaying = false
     @Published var noiseReductionDB: Double = 0
     @Published var errorText: String?
@@ -23,12 +24,17 @@ final class ABTestModel: ObservableObject {
     private var timer: Timer?
     private var startDate: Date?
 
-    // Two synchronized infinite-loop players; we mute the inactive one so the
-    // Off/On switch is instant and gap-free.
+    // Four synchronized infinite-loop players (original/denoised × plain/
+    // Studio Voice); we mute all but the selected one so the switches are
+    // instant and gap-free.
     private var originalPlayer: AVAudioPlayer?
     private var denoisedPlayer: AVAudioPlayer?
+    private var originalStudioPlayer: AVAudioPlayer?
+    private var denoisedStudioPlayer: AVAudioPlayer?
     private var rawURL: URL?
     private var cleanURL: URL?
+    private var rawStudioURL: URL?
+    private var cleanStudioURL: URL?
 
     // MARK: - Recording
 
@@ -62,15 +68,25 @@ final class ABTestModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let clean = denoiser.process(raw)
             let cut = Self.reductionDB(raw: raw, clean: clean)
+            // Studio Voice variants of both sides, so the switch composes
+            // with Off/On exactly like the live pipeline does. Fresh
+            // instances: the chain is stateful.
+            let rawStudio = StudioVoice().process(raw)
+            let cleanStudio = StudioVoice().process(clean)
             do {
                 let tmp = FileManager.default.temporaryDirectory
                 let r = tmp.appendingPathComponent("ode_ab_raw.wav")
                 let c = tmp.appendingPathComponent("ode_ab_clean.wav")
+                let rs = tmp.appendingPathComponent("ode_ab_raw_studio.wav")
+                let cs = tmp.appendingPathComponent("ode_ab_clean_studio.wav")
                 try AudioIO.writeWav(samples: raw, url: r)
                 try AudioIO.writeWav(samples: clean, url: c)
+                try AudioIO.writeWav(samples: rawStudio, url: rs)
+                try AudioIO.writeWav(samples: cleanStudio, url: cs)
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.rawURL = r; self.cleanURL = c
+                    self.rawStudioURL = rs; self.cleanStudioURL = cs
                     self.noiseReductionDB = cut
                     self.preparePlayers()
                     self.phase = .review
@@ -93,17 +109,34 @@ final class ABTestModel: ObservableObject {
         guard let rawURL, let cleanURL else { return }
         originalPlayer = try? AVAudioPlayer(contentsOf: rawURL)
         denoisedPlayer = try? AVAudioPlayer(contentsOf: cleanURL)
-        [originalPlayer, denoisedPlayer].forEach {
-            $0?.numberOfLoops = -1
-            $0?.prepareToPlay()
+        originalStudioPlayer = rawStudioURL.flatMap { try? AVAudioPlayer(contentsOf: $0) }
+        denoisedStudioPlayer = cleanStudioURL.flatMap { try? AVAudioPlayer(contentsOf: $0) }
+        allPlayers.forEach {
+            $0.numberOfLoops = -1
+            $0.prepareToPlay()
         }
         applyMix()
     }
 
-    /// Mute whichever player is not selected so switching is instantaneous.
+    private var allPlayers: [AVAudioPlayer] {
+        [originalPlayer, denoisedPlayer,
+         originalStudioPlayer, denoisedStudioPlayer].compactMap { $0 }
+    }
+
+    /// The player matching the current switch state; everything else is muted.
+    private var selectedPlayer: AVAudioPlayer? {
+        switch (useDenoised, useStudio) {
+        case (false, false): return originalPlayer
+        case (true, false):  return denoisedPlayer
+        case (false, true):  return originalStudioPlayer ?? originalPlayer
+        case (true, true):   return denoisedStudioPlayer ?? denoisedPlayer
+        }
+    }
+
+    /// Mute whichever players are not selected so switching is instantaneous.
     private func applyMix() {
-        originalPlayer?.volume = useDenoised ? 0 : 1
-        denoisedPlayer?.volume = useDenoised ? 1 : 0
+        let selected = selectedPlayer
+        allPlayers.forEach { $0.volume = $0 === selected ? 1 : 0 }
     }
 
     func setUseDenoised(_ on: Bool) {
@@ -111,21 +144,25 @@ final class ABTestModel: ObservableObject {
         applyMix()
     }
 
+    func setUseStudio(_ on: Bool) {
+        useStudio = on
+        applyMix()
+    }
+
     func togglePlay() { isPlaying ? pause() : play() }
 
     private func play() {
-        guard let o = originalPlayer, let d = denoisedPlayer else { return }
+        let players = allPlayers
+        guard !players.isEmpty else { return }
         applyMix()
-        // Start both at a common device time so their loops stay phase-aligned.
-        let t = max(o.deviceCurrentTime, d.deviceCurrentTime) + 0.05
-        o.play(atTime: t)
-        d.play(atTime: t)
+        // Start all at a common device time so their loops stay phase-aligned.
+        let t = (players.map(\.deviceCurrentTime).max() ?? 0) + 0.05
+        players.forEach { $0.play(atTime: t) }
         isPlaying = true
     }
 
     private func pause() {
-        originalPlayer?.pause()
-        denoisedPlayer?.pause()
+        allPlayers.forEach { $0.pause() }
         isPlaying = false
     }
 
@@ -133,6 +170,8 @@ final class ABTestModel: ObservableObject {
         pause()
         originalPlayer = nil
         denoisedPlayer = nil
+        originalStudioPlayer = nil
+        denoisedStudioPlayer = nil
         elapsed = 0
         phase = .idle
     }

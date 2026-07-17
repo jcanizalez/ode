@@ -234,6 +234,7 @@ struct MeetingsView: View {
                     case .summary:  summaryTab(t)
                     case .transcript: transcriptTab(t)
                     case .actions:  actionsTab(t)
+                    case .analytics: analyticsTab(t)
                     }
                 }
                 askBar(t)
@@ -343,6 +344,13 @@ struct MeetingsView: View {
             Button { model.copy(t) } label: {
                 Image(systemName: "doc.on.doc").foregroundStyle(.white.opacity(0.6))
             }.buttonStyle(.plain).help("Copy transcript")
+            if model.recordingURL(for: t) != nil {
+                Button { model.togglePlayback(t) } label: {
+                    Image(systemName: model.playingRecording ? "stop.circle.fill" : "play.circle")
+                        .foregroundStyle(model.playingRecording ? Color.accentColor : .white.opacity(0.6))
+                }.buttonStyle(.plain)
+                    .help(model.playingRecording ? "Stop playback" : "Play call recording")
+            }
             Button { model.draftRecapEmail(t) } label: {
                 if model.draftingRecap {
                     ProgressView().controlSize(.small)
@@ -381,12 +389,13 @@ struct MeetingsView: View {
             tab(.summary, "Summary")
             tab(.transcript, "Transcript")
             tab(.actions, "Action items", badge: t.actionItems?.count)
+            tab(.analytics, "Analytics")
             Spacer()
         }
         .padding(.horizontal, 16)
     }
 
-    private func tab(_ tg: MeetingsModel.Tab, _ label: String, badge: Int? = nil) -> some View {
+    private func tab(_ tg: MeetingsModel.Tab, _ label: LocalizedStringKey, badge: Int? = nil) -> some View {
         Button { model.tab = tg } label: {
             HStack(spacing: 6) {
                 Text(label).font(.system(size: 14, weight: model.tab == tg ? .bold : .medium))
@@ -749,6 +758,95 @@ struct MeetingsView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    // MARK: - Analytics tab (fillers, pace, monologues — on-device text math)
+
+    @ViewBuilder private func analyticsTab(_ t: Transcript) -> some View {
+        let a = model.analytics(for: t)
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(spacing: 12) {
+                statCard("Duration", durationText(t.duration))
+                statCard("Words", "\(a.totalWords)")
+                statCard("Pace", paceText(a.meetingWPM))
+            }
+            section("BY SPEAKER") {
+                ForEach(a.perSpeaker, id: \.speaker) { s in
+                    speakerStatsCard(s, in: t)
+                }
+            }
+            Text("Counted on-device from the transcript. Filler words are a heuristic — a trend to watch, not a verdict.")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.35))
+        }
+        .padding(18)
+    }
+
+    private func paceText(_ wpm: Double) -> String {
+        wpm > 0 ? String(format: String(localized: "%d wpm"), Int(wpm.rounded())) : "—"
+    }
+
+    private func talkShareText(_ share: Double) -> String {
+        String(format: String(localized: "%d%% of talk time"),
+               Int((share * 100).rounded()))
+    }
+
+    private func statCard(_ label: LocalizedStringKey, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value).font(.system(size: 20, weight: .heavy)).foregroundStyle(.white)
+            Text(label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
+    }
+
+    @ViewBuilder private func speakerStatsCard(_ s: SpeakingAnalytics.SpeakerStats,
+                                               in t: Transcript) -> some View {
+        let share = t.talkTime.first { $0.speaker == s.speaker }?.fraction ?? 0
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                SpeakerAvatar(speaker: s.speaker, size: 24)
+                Text(s.speaker).font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(SpeakerStyle.color(s.speaker))
+                Spacer()
+                Text(talkShareText(share))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+            }
+            HStack(spacing: 22) {
+                metric("Pace", paceText(s.wordsPerMinute))
+                metric("Words", "\(s.words)")
+                metric("Fillers", fillerText(s))
+            }
+            if s.longestMonologueSeconds >= 10 {
+                HStack(spacing: 8) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    Text("Longest monologue: \(durationText(s.longestMonologueSeconds)) at \(timestamp(s.longestMonologueStart))")
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                    Button("Jump") { model.jump(to: s.longestMonologueStart, in: t) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
+        .contextMenu { renameMenu(t, speaker: s.speaker) }
+    }
+
+    private func fillerText(_ s: SpeakingAnalytics.SpeakerStats) -> String {
+        guard s.words > 0 else { return "—" }
+        return "\(s.fillerCount) · \(String(format: "%.1f", s.fillerRate))/100"
+    }
+
+    private func metric(_ label: LocalizedStringKey, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            Text(label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
         }
     }
 
