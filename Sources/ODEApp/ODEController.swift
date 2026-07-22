@@ -96,6 +96,11 @@ final class ODEController: ObservableObject {
     /// dies with the meeting (created in startTranscription, finalized in the
     /// stop/finish paths); survives engine blips like the transcriber does.
     private var callRecorder: CallRecorder?
+    /// Speaker-bleed guard: correlates the mic against what the speaker
+    /// path is playing; while the mic is just hearing the speakers, the
+    /// "You" transcription feed is muted so others' words are never
+    /// attributed to the user. Always on while transcribing.
+    private let echoGate = EchoGate()
 
     init() {
         // Restore persisted settings before wiring anything up.
@@ -908,12 +913,7 @@ final class ODEController: ObservableObject {
             } else if let mt = meetingTranscriber as? MeetingTranscriber {
                 // Resumed within the grace window (or an engine was swapped):
                 // re-wire the audio feeds to the SAME meeting.
-                micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
-                speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
-                if let rec = callRecorder {
-                    micEngine.onProcessedAudio = { [weak rec] in rec?.feedMic($0) }
-                    speakerEngine.onProcessedAudio = { [weak rec] in rec?.feedOthers($0) }
-                }
+                wireTranscriptionFeeds(mt)
             }
         } else if transcribing && pendingTranscriptionStop == nil {
             let work = DispatchWorkItem { [weak self] in
@@ -951,24 +951,25 @@ final class ODEController: ObservableObject {
             }
         }
 
-        // Forward captured audio from each engine to the matching transcriber.
-        micEngine.onCapturedAudio = { [weak mt] buf in mt?.feedMic(buf) }
-        speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
-
         // Opt-in call recording: the PROCESSED streams (what the call hears),
         // to a temp name until the transcript's file stem exists at save.
         if recordMeetingAudio {
             let tempURL = TranscriptStore.shared.directory
                 .appendingPathComponent("recording-\(UUID().uuidString).m4a")
             do {
-                let rec = try CallRecorder(url: tempURL)
-                callRecorder = rec
-                micEngine.onProcessedAudio = { [weak rec] in rec?.feedMic($0) }
-                speakerEngine.onProcessedAudio = { [weak rec] in rec?.feedOthers($0) }
+                callRecorder = try CallRecorder(url: tempURL)
             } catch {
                 LiveEngine.diagnostic("[recorder] start failed: \(error.localizedDescription)")
             }
         }
+
+        echoGate.reset()
+        echoGate.onTransition = { active in
+            LiveEngine.diagnostic(active
+                ? "[echogate] muting mic transcription (speaker bleed)"
+                : "[echogate] mic transcription resumed")
+        }
+        wireTranscriptionFeeds(mt)
 
         Task {
             do {
@@ -978,6 +979,29 @@ final class ODEController: ObservableObject {
                 NSLog("ODE: transcription start failed: \(error.localizedDescription)")
                 await MainActor.run { self.transcribing = false }
             }
+        }
+    }
+
+    /// Wire both engines' audio into the transcriber, echo gate and (when
+    /// recording) the call recorder. One place, used by session start AND
+    /// the grace-window resume so a device switch can't drop a consumer.
+    /// The "You" feed is muted while the gate says the mic is only hearing
+    /// the speakers — that audio is the other side of the call.
+    @available(macOS 26.0, *)
+    private func wireTranscriptionFeeds(_ mt: MeetingTranscriber) {
+        let gate = echoGate
+        let recorder = callRecorder
+        micEngine.onCapturedAudio = { [weak mt] buf in
+            if !gate.echoActive { mt?.feedMic(buf) }
+        }
+        speakerEngine.onCapturedAudio = { [weak mt] buf in mt?.feedOthers(buf) }
+        micEngine.onProcessedAudio = { samples in
+            gate.pushMic(samples)
+            recorder?.feedMic(samples)
+        }
+        speakerEngine.onProcessedAudio = { samples in
+            gate.pushReference(samples)
+            recorder?.feedOthers(samples)
         }
     }
 
