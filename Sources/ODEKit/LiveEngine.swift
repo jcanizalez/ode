@@ -360,23 +360,23 @@ public final class LiveEngine {
         // If anything below throws we must tear the half-built graph down —
         // otherwise the next start() would stack a second source node.
         do {
-            var inFormat: AVAudioFormat?
             if let capture {
                 // --- Plain capture engine, pinned to the selected device ---
                 let input = capture.inputNode
                 if let inDev = inputDevice {
                     try setInputDevice(capture, deviceID: inDev.id)
                 }
-                // Validate the format: if the device just disappeared it comes
-                // back invalid (0 Hz), and installTap would raise an uncatchable
-                // NSException — throw a proper error instead of crashing.
+                // Sanity check only: a disappeared device reports 0 Hz.
+                // The value itself is NOT trustworthy — after pinning,
+                // inputFormat can still describe the system default device
+                // (often the virtual mic), so it must never be passed to
+                // installTap as an explicit format.
                 let f = input.inputFormat(forBus: 0)
                 guard f.sampleRate > 0, f.channelCount > 0 else {
                     throw NSError(domain: "ode.live", code: -11,
                                   userInfo: [NSLocalizedDescriptionKey:
                                     "Input device has no valid format (was it disconnected?)"])
                 }
-                inFormat = f
             }
 
             let fmt = AudioIO.monoFormat
@@ -391,19 +391,29 @@ public final class LiveEngine {
                 return noErr
             }
             sourceNode = node
-            playback.attach(node)
-            playback.connect(node, to: playback.mainMixerNode, format: fmt)
+            try catchingObjCException {
+                playback.attach(node)
+                playback.connect(node, to: playback.mainMixerNode, format: fmt)
+            }
 
             if let dev = outputDevice {
                 try setOutputDevice(playback, deviceID: dev.id)
             }
 
             captureConverter = nil  // fresh converter state per session
-            if let capture, let inFormat {
+            if let capture {
                 // --- Capture tap: mic -> (process queue: denoise) -> ring ---
-                capture.inputNode.installTap(onBus: 0, bufferSize: 480,
-                                             format: inFormat) { [weak self] buffer, _ in
-                    self?.processCaptured(buffer)
+                // format: nil — the tap follows the bus's true hardware
+                // format. Passing inputFormat here is unreliable (see above)
+                // and made every start fail with "format mismatch" whenever
+                // the system default input differed from the pinned device;
+                // convertToMono48k handles whatever format arrives. The guard
+                // remains for formats AVFAudio still raises on (device gone).
+                try catchingObjCException {
+                    capture.inputNode.installTap(onBus: 0, bufferSize: 480,
+                                                 format: nil) { [weak self] buffer, _ in
+                        self?.processCaptured(buffer)
+                    }
                 }
                 capture.prepare()
                 playback.prepare()

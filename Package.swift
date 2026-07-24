@@ -26,9 +26,17 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(
+            name: "CObjCCatch",
+            path: "Sources/CObjCCatch",
+            sources: ["ObjCCatch.m"],
+            publicHeadersPath: "include",
+            cSettings: [.unsafeFlags(["-fobjc-arc"])]
+        ),
+        .target(
             name: "ODEKit",
             dependencies: [
                 "CSherpa",
+                "CObjCCatch",
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             path: "Sources/ODEKit",
