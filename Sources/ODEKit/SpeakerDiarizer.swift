@@ -60,6 +60,19 @@ public final class SpeakerDiarizer {
         _ = try await sharedModels(progress: progress)
     }
 
+    /// True when the diarization model files are already on disk (no
+    /// download needed). Checks FluidAudio's cache for a compiled model
+    /// rather than a specific variant name, so it survives upstream
+    /// renames.
+    public static var modelIsCached: Bool {
+        let dir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("FluidAudio/Models/sortformer")
+        guard let files = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)
+        else { return false }
+        return files.contains { ($0 as? URL)?.pathExtension == "mlmodelc" }
+    }
+
     // MARK: - Session
 
     public func start() async throws {

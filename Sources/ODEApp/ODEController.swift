@@ -66,6 +66,10 @@ final class ODEController: ObservableObject {
     @Published var launchAtLogin = false
     /// 0...1 while an AI model is downloading, nil otherwise.
     @Published var modelDownloadProgress: Double?
+    /// Which model is downloading ("parakeet" / "diarizer"), nil when idle.
+    @Published var downloadingModel: String?
+    /// Why the last model download failed — shown in Settings with a Retry.
+    @Published var modelDownloadError: String?
 
     // Live audio levels (0...1) for the meters.
     @Published var micLevel: Float = 0
@@ -103,6 +107,14 @@ final class ODEController: ObservableObject {
     private let echoGate = EchoGate()
 
     init() {
+        // A version header at every launch anchors the field log: shared
+        // diagnostics from another machine immediately show what build and
+        // OS produced the lines that follow. Trim first so the log can't
+        // grow unbounded across months of sessions.
+        Diagnostics.trimEngineLog()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        LiveEngine.diagnostic("[app] ODE v\(version) launched — macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+
         // Restore persisted settings before wiring anything up.
         let d = UserDefaults.standard
         micEnabled = d.object(forKey: Keys.micEnabled) as? Bool ?? false
@@ -606,7 +618,7 @@ final class ODEController: ObservableObject {
         detectSpeakers.toggle()
         persistSettings()
         if detectSpeakers {
-            prefetchModel { try await SpeakerDiarizer.ensureModel(progress: $0) }
+            downloadDiarizerModel()
         }
     }
 
@@ -615,14 +627,28 @@ final class ODEController: ObservableObject {
     /// start of their first transcribed meeting.
     private func prefetchParakeetModel() {
         guard !ParakeetStreamTranscriber.modelIsCached else { return }
-        prefetchModel { try await ParakeetStreamTranscriber.ensureModel(progress: $0) }
+        prefetchModel("parakeet") { try await ParakeetStreamTranscriber.ensureModel(progress: $0) }
+    }
+
+    /// Settings' explicit Download/Retry buttons for the model rows.
+    func downloadParakeetModel() {
+        prefetchParakeetModel()
+    }
+
+    func downloadDiarizerModel() {
+        guard !SpeakerDiarizer.modelIsCached else { return }
+        prefetchModel("diarizer") { try await SpeakerDiarizer.ensureModel(progress: $0) }
     }
 
     private func prefetchModel(
+        _ name: String,
         _ ensure: @escaping (@escaping @Sendable (Double) -> Void) async throws -> Void
     ) {
         guard modelDownloadProgress == nil else { return }
         modelDownloadProgress = 0
+        downloadingModel = name
+        modelDownloadError = nil
+        LiveEngine.diagnostic("[models] \(name) download started")
         Task {
             do {
                 try await ensure { fraction in
@@ -634,10 +660,31 @@ final class ODEController: ObservableObject {
                         }
                     }
                 }
+                LiveEngine.diagnostic("[models] \(name) ready")
             } catch {
-                NSLog("ODE: model download failed: \(error.localizedDescription)")
+                LiveEngine.diagnostic("[models] \(name) download FAILED: \(error.localizedDescription)")
+                await MainActor.run { self.modelDownloadError = error.localizedDescription }
             }
-            await MainActor.run { self.modelDownloadProgress = nil }
+            await MainActor.run {
+                self.modelDownloadProgress = nil
+                self.downloadingModel = nil
+            }
+        }
+    }
+
+    /// Bundle logs + system snapshot into a zip and reveal it in Finder,
+    /// ready to drag into a message — for cross-machine debugging.
+    func exportDiagnostics() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let zip = try Diagnostics.exportBundle(appVersion: version)
+                DispatchQueue.main.async {
+                    NSWorkspace.shared.activateFileViewerSelecting([zip])
+                }
+            } catch {
+                LiveEngine.diagnostic("[diagnostics] export failed: \(error.localizedDescription)")
+            }
         }
     }
 

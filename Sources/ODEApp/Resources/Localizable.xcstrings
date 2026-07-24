@@ -21,6 +21,16 @@
         }
       }
     },
+    "%lld%%": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld%%"
+          }
+        }
+      }
+    },
     "AI SUMMARY": {
       "localizations": {
         "es": {
@@ -127,6 +137,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "POR HABLANTE"
+          }
+        }
+      }
+    },
+    "Bundles ODE's engine log, crash reports, device list and settings into a zip and shows it in Finder — ready to share when reporting a problem. Contains no audio, recordings or transcripts.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reúne el registro del motor de ODE, los informes de fallos, la lista de dispositivos y los ajustes en un zip y lo muestra en Finder — listo para compartir al informar de un problema. No contiene audio, grabaciones ni transcripciones."
           }
         }
       }
@@ -301,6 +321,36 @@
         }
       }
     },
+    "Diagnostics": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diagnóstico"
+          }
+        }
+      }
+    },
+    "Download": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descargar"
+          }
+        }
+      }
+    },
+    "Downloaded": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descargado"
+          }
+        }
+      }
+    },
     "Draft recap email (copies to clipboard)": {
       "localizations": {
         "es": {
@@ -357,6 +407,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Experimental: puede dejar tu micrófono en silencio; déjalo desactivado salvo para pruebas. Evita que tu micrófono recapture el sonido de los altavoces. Los AirPods y la mayoría de los auriculares ya cancelan el eco por su cuenta."
+          }
+        }
+      }
+    },
+    "Export": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar"
           }
         }
       }
@@ -607,6 +667,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "MENCIONES DE TI"
+          }
+        }
+      }
+    },
+    "MODELS": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MODELOS"
           }
         }
       }
@@ -921,6 +991,16 @@
         }
       }
     },
+    "Parakeet speech model": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo de voz Parakeet"
+          }
+        }
+      }
+    },
     "Passing through": {
       "localizations": {
         "es": {
@@ -1091,6 +1171,16 @@
         }
       }
     },
+    "Retry": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reintentar"
+          }
+        }
+      }
+    },
     "Saves each meeting's audio (both sides, denoised) next to its transcript — on this Mac only, never uploaded. Applies from the next meeting. Recording laws vary; let participants know.": {
       "localizations": {
         "es": {
@@ -1137,6 +1227,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Altavoz"
+          }
+        }
+      }
+    },
+    "Speaker detection model": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo de detección de hablantes"
           }
         }
       }
@@ -1427,6 +1527,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Actualizaciones"
+          }
+        }
+      }
+    },
+    "Used by Detect speakers to tell remote participants apart. Fetched once, then fully offline.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lo usa Detectar hablantes para distinguir a los participantes remotos. Se descarga una vez y después funciona sin conexión."
+          }
+        }
+      }
+    },
+    "Used by the Parakeet engine. About 470 MB, fetched once from Hugging Face — after that, transcription is fully offline. The Apple engine uses system assets managed by macOS.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lo usa el motor Parakeet. Unos 470 MB, se descarga una sola vez de Hugging Face — después, la transcripción funciona completamente sin conexión. El motor de Apple usa recursos del sistema gestionados por macOS."
           }
         }
       }

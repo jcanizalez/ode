@@ -268,6 +268,65 @@ struct SettingsView: View {
     // MARK: Transcription
 
     private var transcriptionPane: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            transcriptionCard
+            sectionLabel("MODELS")
+                .padding(.top, 6)
+            card {
+                modelRow(icon: "waveform.and.mic",
+                         title: "Parakeet speech model",
+                         hint: "Used by the Parakeet engine. About 470 MB, fetched once from Hugging Face — after that, transcription is fully offline. The Apple engine uses system assets managed by macOS.",
+                         cached: ParakeetStreamTranscriber.modelIsCached,
+                         name: "parakeet") { controller.downloadParakeetModel() }
+                modelRow(icon: "person.2.wave.2",
+                         title: "Speaker detection model",
+                         hint: "Used by Detect speakers to tell remote participants apart. Fetched once, then fully offline.",
+                         cached: SpeakerDiarizer.modelIsCached,
+                         name: "diarizer") { controller.downloadDiarizerModel() }
+            }
+        }
+    }
+
+    /// One model's status row: Downloaded ✓ / live progress / Download or
+    /// Retry (with the failure reason folded into the hint).
+    @ViewBuilder
+    private func modelRow(icon: String, title: LocalizedStringKey, hint: LocalizedStringKey,
+                          cached: Bool, name: String, download: @escaping () -> Void) -> some View {
+        let failed = controller.modelDownloadError != nil && controller.downloadingModel == nil
+        settingRow(icon: icon, hint: hint) {
+            Text(title).rowLabelStyle()
+        } trailing: {
+            if cached {
+                Label("Downloaded", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.green.opacity(0.85))
+                    .labelStyle(.titleAndIcon)
+            } else if controller.downloadingModel == name,
+                      let progress = controller.modelDownloadProgress {
+                HStack(spacing: 8) {
+                    ProgressView(value: progress)
+                        .frame(width: 90)
+                    Text("\(Int(progress * 100))%")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            } else {
+                HStack(spacing: 8) {
+                    if failed {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange.opacity(0.9))
+                            .help(controller.modelDownloadError ?? "")
+                    }
+                    Button(failed ? "Retry" : "Download") { download() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(controller.downloadingModel != nil)
+                }
+            }
+        }
+    }
+
+    private var transcriptionCard: some View {
         card {
             settingRow(icon: "cpu",
                        hint: "Speech-to-text engine. Parakeet detects the language automatically (excellent Spanish); Apple is the built-in system engine. Applies to the next meeting.") {
@@ -348,6 +407,14 @@ struct SettingsView: View {
                 Toggle("", isOn: autoCheckUpdates)
                     .toggleStyle(.switch).labelsHidden().tint(.accentColor)
                     .scaleEffect(0.85)
+            }
+            settingRow(icon: "stethoscope",
+                       hint: "Bundles ODE's engine log, crash reports, device list and settings into a zip and shows it in Finder — ready to share when reporting a problem. Contains no audio, recordings or transcripts.") {
+                Text("Diagnostics").rowLabelStyle()
+            } trailing: {
+                Button("Export") { controller.exportDiagnostics() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
             }
         }
     }
