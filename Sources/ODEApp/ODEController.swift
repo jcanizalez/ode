@@ -216,13 +216,16 @@ final class ODEController: ObservableObject {
         }
         if micActiveSince == nil { micActiveSince = Date() }
         let deafFor = Date().timeIntervalSince(micActiveSince ?? Date())
-        if micEngine.sessionPeak == 0, deafFor > 10 {
+        // `secondsSinceInput` covers both "never heard anything" and "worked,
+        // then went silent mid-call". The old test — a zero `sessionPeak`,
+        // which is a lifetime maximum — could only ever catch the first.
+        if deafFor > 10, micEngine.secondsSinceInput > 10 {
             if micSilentWarning == nil {
                 micSilentWarning = echoCancelEnabled
                     ? String(localized: "ODE can't hear your mic. Echo cancellation is experimental — try turning it off in Settings → Audio.")
                     : String(localized: "ODE can't hear your mic. Check System Settings → Privacy & Security → Microphone, or pick another device.")
             }
-        } else if micEngine.sessionPeak > 0, micSilentWarning != nil {
+        } else if micEngine.secondsSinceInput <= 10, micSilentWarning != nil {
             micSilentWarning = nil
         }
     }

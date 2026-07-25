@@ -57,6 +57,16 @@ final class LiveEngineTests: XCTestCase {
         XCTAssertNil(engine.onCapturedAudio)
     }
 
+    /// The mic-silence warning keys off this: an engine that has never heard
+    /// a sample must report an unbounded gap, not zero. Reporting 0 would
+    /// read as "audio is arriving right now" and suppress the warning.
+    func testSecondsSinceInputIsInfiniteBeforeAnyAudio() {
+        let engine = LiveEngine()
+        XCTAssertEqual(engine.secondsSinceInput, .infinity)
+        engine.stop()
+        XCTAssertEqual(engine.secondsSinceInput, .infinity)
+    }
+
     func testStartRefusesSameInputAndOutputDevice() {
         let engine = LiveEngine()
         guard let out = AudioDevices.defaultOutput() else { return }

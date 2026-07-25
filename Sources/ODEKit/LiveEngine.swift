@@ -302,6 +302,16 @@ public final class LiveEngine {
     public var sessionPeak: Float {
         get { os_unfair_lock_lock(&levelLock); defer { os_unfair_lock_unlock(&levelLock) }; return _sessionPeak }
     }
+    /// Seconds since the capture last delivered a non-zero sample, or
+    /// `.infinity` if nothing has arrived this session. Unlike `sessionPeak`
+    /// — a lifetime maximum, which stays positive forever once the mic has
+    /// worked even briefly — this notices a mic that worked and then died.
+    public var secondsSinceInput: TimeInterval {
+        os_unfair_lock_lock(&levelLock); defer { os_unfair_lock_unlock(&levelLock) }
+        guard _lastInputAt > 0 else { return .infinity }
+        return CFAbsoluteTimeGetCurrent() - _lastInputAt
+    }
+    private var _lastInputAt: CFAbsoluteTime = 0
     private func updateLevel(_ mono: [Float]) {
         guard !mono.isEmpty else { return }
         var sum: Float = 0
@@ -317,6 +327,9 @@ public final class LiveEngine {
         os_unfair_lock_lock(&levelLock)
         _level = _level * 0.7 + scaled * 0.3
         if peak > _sessionPeak { _sessionPeak = peak }
+        // Any non-zero sample counts as hearing something: even a silent room
+        // has a noise floor, so exactly 0.0 is the signature of a dead path.
+        if peak > 0 { _lastInputAt = CFAbsoluteTimeGetCurrent() }
         os_unfair_lock_unlock(&levelLock)
     }
 
@@ -347,7 +360,10 @@ public final class LiveEngine {
         denoiser.resetStreaming()
         mixer.reset()
         voice.reset()
-        os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
+        os_unfair_lock_lock(&levelLock)
+        _sessionPeak = 0
+        _lastInputAt = 0
+        os_unfair_lock_unlock(&levelLock)
 
         // Playback engine is fresh every session; capture is a raw AUHAL
         // unit (plain path) or the process-wide VPIO unit (echo cancel).
@@ -454,6 +470,14 @@ public final class LiveEngine {
 
         startedAtTime = CFAbsoluteTimeGetCurrent()
         isRunning = true
+
+        // Capture-side death — device unplugged, or the IO proc silently
+        // stopping — has no AVAudioEngine notification behind it, so
+        // HALCapture reports it directly. Wired only once the session is
+        // fully up: during start there is nothing coherent to restart.
+        halCapture?.onFailure = { [weak self] in
+            self?.onConfigurationChange?()
+        }
     }
 
     /// Shared capture-processing body — identical for the plain engine tap
@@ -519,9 +543,16 @@ public final class LiveEngine {
         os_unfair_lock_lock(&levelLock)
         let peak = _sessionPeak
         os_unfair_lock_unlock(&levelLock)
-        let line = String(format: "[%@] wrote=%d played=%d underruns=%d skips=%d inPeak=%.4f maxWriteGap=%dms slowWrites=%d",
+        var line = String(format: "[%@] wrote=%d played=%d underruns=%d skips=%d inPeak=%.4f maxWriteGap=%dms slowWrites=%d",
                           label, s.written, s.read, s.underruns, s.skips, peak,
                           s.maxWriteGapMs, s.slowWrites)
+        // Capture drops, appended only when they happened: a device erroring
+        // mid-session looks exactly like silence, and a bare inPeak can't
+        // tell "nothing was said" from "every buffer failed to render".
+        if let c = halCapture?.stats, c.renderFailures > 0 || c.allocFailures > 0 {
+            line += String(format: " renderFail=%d(OSStatus %d) allocFail=%d",
+                           c.renderFailures, Int(c.lastRenderStatus), c.allocFailures)
+        }
         Self.diagnostic(line)
     }
 
@@ -563,6 +594,7 @@ public final class LiveEngine {
             VoiceProcessingCapture.shared.stop()
             usingVPIO = false
         }
+        halCapture?.onFailure = nil
         halCapture?.dispose()
         // Drain in-flight inference before touching the denoiser's state.
         processQueue.sync {}
@@ -575,7 +607,10 @@ public final class LiveEngine {
         halCapture = nil
         playbackEngine = nil
         ring.reset()
-        os_unfair_lock_lock(&levelLock); _level = 0; os_unfair_lock_unlock(&levelLock)
+        os_unfair_lock_lock(&levelLock)
+        _level = 0
+        _lastInputAt = 0
+        os_unfair_lock_unlock(&levelLock)
     }
 
     /// Route an AVAudioEngine's output to a specific CoreAudio device.
