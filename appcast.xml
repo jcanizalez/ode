@@ -5,6 +5,15 @@
     <description>Most recent updates to ODE</description>
     <language>en</language>
     <item>
+      <title>v0.13.0</title>
+      <pubDate>Sat, 25 Jul 2026 18:19:56 GMT</pubDate>
+      <sparkle:version>0.13.0</sparkle:version>
+      <sparkle:shortVersionString>0.13.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <link>https://github.com/jcanizalez/ode/releases/tag/v0.13.0</link>
+      <enclosure url="https://github.com/jcanizalez/ode/releases/download/v0.13.0/ODE-0.13.0.pkg" sparkle:edSignature="D6Cs+CKRGE0TM4OAYWlR8urjQULTI7SyI+t2T1uU87JQhbdfMKixsA48qHItlOIRZ1nz43u2e1DlcCB2dLVbAg==" length="21563756" type="application/octet-stream"/>
+    </item>
+    <item>
       <title>v0.12.3</title>
       <pubDate>Sat, 25 Jul 2026 01:05:10 GMT</pubDate>
       <sparkle:version>0.12.3</sparkle:version>
