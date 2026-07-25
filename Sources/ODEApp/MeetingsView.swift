@@ -4,29 +4,69 @@ import ODEKit
 
 // Speaker avatar colors, matching the design language.
 enum SpeakerStyle {
+    /// Ten hues spaced around the circle, all mid-brightness so the white
+    /// initials stay legible on the dark panel. Deliberately discrete: the
+    /// old continuous hue mapping let two speakers land a few degrees apart
+    /// and read as the same colour.
+    private static let palette: [Color] = [
+        Color(hue: 0.61, saturation: 0.62, brightness: 0.86),  // blue
+        Color(hue: 0.94, saturation: 0.55, brightness: 0.85),  // pink
+        Color(hue: 0.38, saturation: 0.58, brightness: 0.76),  // green
+        Color(hue: 0.08, saturation: 0.70, brightness: 0.90),  // orange
+        Color(hue: 0.78, saturation: 0.50, brightness: 0.85),  // purple
+        Color(hue: 0.48, saturation: 0.60, brightness: 0.78),  // teal
+        Color(hue: 0.99, saturation: 0.62, brightness: 0.84),  // red
+        Color(hue: 0.15, saturation: 0.68, brightness: 0.82),  // amber
+        Color(hue: 0.54, saturation: 0.62, brightness: 0.82),  // cyan
+        Color(hue: 0.24, saturation: 0.58, brightness: 0.74),  // lime
+    ]
+
     static func color(_ speaker: String) -> Color {
         switch speaker.lowercased() {
         case "you":    return Color.accentColor
         case "others": return Color.orange
-        default:
-            // Stable hash → hue for any other label.
-            let h = Double(abs(speaker.hashValue) % 360) / 360.0
-            return Color(hue: h, saturation: 0.55, brightness: 0.85)
+        default:       return palette[SpeakerBadge.paletteIndex(for: speaker)]
         }
     }
+
+    static func color(at index: Int) -> Color { palette[index % palette.count] }
+
     static func initials(_ speaker: String) -> String {
-        if speaker.caseInsensitiveCompare("you") == .orderedSame { return "Y" }
-        if speaker.caseInsensitiveCompare("others") == .orderedSame { return "O" }
-        return String(speaker.prefix(1)).uppercased()
+        SpeakerBadge.initials(for: speaker)
+    }
+}
+
+/// Colours for the speakers of one meeting, with collisions resolved so no
+/// two people in the same transcript wear the same badge.
+struct SpeakerPalette {
+    private let indices: [String: Int]
+
+    init(_ speakers: [String]) {
+        indices = SpeakerBadge.paletteIndices(for: speakers)
+    }
+
+    func color(_ speaker: String) -> Color {
+        switch speaker.lowercased() {
+        case "you":    return Color.accentColor
+        case "others": return Color.orange
+        default:
+            // A speaker outside this meeting (an action-item owner the AI
+            // named, say) still gets a stable colour from their name.
+            guard let index = indices[speaker] else { return SpeakerStyle.color(speaker) }
+            return SpeakerStyle.color(at: index)
+        }
     }
 }
 
 struct SpeakerAvatar: View {
     let speaker: String
     var size: CGFloat = 26
+    /// The meeting's palette, so two speakers never share a colour. Nil
+    /// where no meeting is in scope — falls back to the name's own slot.
+    var palette: SpeakerPalette?
     var body: some View {
         ZStack {
-            Circle().fill(SpeakerStyle.color(speaker))
+            Circle().fill(palette?.color(speaker) ?? SpeakerStyle.color(speaker))
             Text(SpeakerStyle.initials(speaker))
                 .font(.system(size: size * 0.45, weight: .bold))
                 .foregroundStyle(.white)
@@ -185,7 +225,7 @@ struct MeetingsView: View {
                 Text(t.summary ?? previewLine(t))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 HStack(spacing: 6) {
-                    ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 18) }
+                    ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 18, palette: palette(t)) }
                     Text(durationText(t.duration))
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.accentColor)
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -234,6 +274,8 @@ struct MeetingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 detailHeader(t)
                 Divider().overlay(Color.white.opacity(0.08))
+                peopleRow(t)
+                Divider().overlay(Color.white.opacity(0.08))
                 tabBar(t)
                 Divider().overlay(Color.white.opacity(0.08))
                 ScrollView {
@@ -274,7 +316,7 @@ struct MeetingsView: View {
                         Text("Started \(timeText(t.startedAt))").foregroundStyle(.white.opacity(0.5))
                         Text(durationText(t.duration)).foregroundStyle(.white.opacity(0.5))
                         HStack(spacing: -5) {
-                            ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 20) }
+                            ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 20, palette: palette(t)) }
                         }
                     }
                     .font(.system(size: 12))
@@ -335,9 +377,10 @@ struct MeetingsView: View {
                 HStack(spacing: 10) {
                     Text(dateText(t.startedAt)).foregroundStyle(.white.opacity(0.5))
                     Text(durationText(t.duration)).foregroundStyle(.white.opacity(0.5))
+                    Text("\(t.speakers.count) \(t.speakers.count == 1 ? "person" : "people")")
+                        .foregroundStyle(.white.opacity(0.5))
                 }
                 .font(.system(size: 12))
-                peopleRow(t)
             }
             Spacer()
             Button { model.toggleStar(t) } label: {
@@ -488,7 +531,7 @@ struct MeetingsView: View {
 
             section("TALK TIME") {
                 ForEach(t.talkTime, id: \.speaker) { entry in
-                    talkTimeRow(entry.speaker, entry.fraction)
+                    talkTimeRow(entry.speaker, entry.fraction, palette(t))
                         .contextMenu { renameMenu(t, speaker: entry.speaker) }
                 }
                 interactivityRow(t)
@@ -581,11 +624,11 @@ struct MeetingsView: View {
                 translateMenu
                 ForEach(t.ordered) { seg in
                     HStack(alignment: .top, spacing: 11) {
-                        SpeakerAvatar(speaker: seg.speaker, size: 28)
+                        SpeakerAvatar(speaker: seg.speaker, size: 28, palette: palette(t))
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
                                 Text(seg.speaker).font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(SpeakerStyle.color(seg.speaker))
+                                    .foregroundStyle(palette(t).color(seg.speaker))
                                 Text(timestamp(seg.start)).font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(.white.opacity(0.4))
                             }
@@ -634,7 +677,7 @@ struct MeetingsView: View {
                         Spacer(minLength: 0)
                         if let owner = item.owner {
                             HStack(spacing: 5) {
-                                SpeakerAvatar(speaker: owner, size: 16)
+                                SpeakerAvatar(speaker: owner, size: 16, palette: palette(t))
                                 Text(owner).font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.7))
                             }
@@ -746,7 +789,7 @@ struct MeetingsView: View {
                                 .foregroundStyle(Color.accentColor)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(seg.speaker).font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(SpeakerStyle.color(seg.speaker))
+                                    .foregroundStyle(palette(t).color(seg.speaker))
                                 Text(seg.text).font(.system(size: 13))
                                     .foregroundStyle(.white.opacity(0.85))
                                     .lineLimit(2)
@@ -810,9 +853,9 @@ struct MeetingsView: View {
         let share = t.talkTime.first { $0.speaker == s.speaker }?.fraction ?? 0
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                SpeakerAvatar(speaker: s.speaker, size: 24)
+                SpeakerAvatar(speaker: s.speaker, size: 24, palette: palette(t))
                 Text(s.speaker).font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(SpeakerStyle.color(s.speaker))
+                    .foregroundStyle(palette(t).color(s.speaker))
                 Spacer()
                 Text(talkShareText(share))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
@@ -855,12 +898,26 @@ struct MeetingsView: View {
 
     // MARK: - People
 
+    /// Colours for this meeting's speakers, collisions resolved. Cheap
+    /// enough to build per render — a handful of names and a dictionary.
+    private func palette(_ t: Transcript) -> SpeakerPalette {
+        SpeakerPalette(t.speakers)
+    }
+
     /// Everyone in the meeting as a chip you can click to rename. This used
     /// to be a right-click context menu only, which meant the feature may as
     /// well not have existed — nobody discovers a hidden menu on a name.
+    ///
+    /// Its own full-width row rather than a line in the header: beside the
+    /// header's buttons there was no room, and SwiftUI resolved that by
+    /// wrapping each name one letter per line.
     private func peopleRow(_ t: Transcript) -> some View {
-        HStack(spacing: 6) {
-            ForEach(t.speakers, id: \.self) { speakerChip(t, speaker: $0) }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(t.speakers, id: \.self) { speakerChip(t, speaker: $0) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
         }
     }
 
@@ -871,9 +928,13 @@ struct MeetingsView: View {
             beginRename(speaker, in: t)
         } label: {
             HStack(spacing: 5) {
-                SpeakerAvatar(speaker: speaker, size: 18)
+                SpeakerAvatar(speaker: speaker, size: 18, palette: palette(t))
                 Text(speaker).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.85))
+                    // Never wrap: a squeezed chip must clip or scroll, not
+                    // stack its name vertically.
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                 if remembered {
                     // ODE knows this voice and will label them automatically
                     // in future meetings.
@@ -888,6 +949,7 @@ struct MeetingsView: View {
             .background(Capsule().fill(Color.white.opacity(editable ? 0.07 : 0.03)))
         }
         .buttonStyle(.plain)
+        .fixedSize()
         .disabled(!editable)
         .help(remembered ? "ODE remembers this voice — click to rename"
                          : (editable ? "Click to name this speaker" : "That's you"))
@@ -945,14 +1007,15 @@ struct MeetingsView: View {
         }
     }
 
-    private func talkTimeRow(_ speaker: String, _ fraction: Double) -> some View {
+    private func talkTimeRow(_ speaker: String, _ fraction: Double,
+                             _ pal: SpeakerPalette) -> some View {
         HStack(spacing: 10) {
-            SpeakerAvatar(speaker: speaker, size: 24)
+            SpeakerAvatar(speaker: speaker, size: 24, palette: pal)
             Text(speaker).font(.system(size: 13, weight: .medium)).foregroundStyle(.white).frame(width: 70, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.08)).frame(height: 7)
-                    Capsule().fill(SpeakerStyle.color(speaker)).frame(width: max(6, geo.size.width * fraction), height: 7)
+                    Capsule().fill(pal.color(speaker)).frame(width: max(6, geo.size.width * fraction), height: 7)
                 }
             }.frame(height: 7)
             Text("\(Int((fraction * 100).rounded()))%").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).frame(width: 40, alignment: .trailing)
