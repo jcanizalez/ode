@@ -140,7 +140,7 @@ public final class LiveEngine {
     /// across start/stop cycles is unreliable with voice processing enabled —
     /// second sessions failed with invalid input formats or AU initialization
     /// errors (-10875) in the field.
-    private var captureEngine: AVAudioEngine?
+    private var halCapture: HALCapture?
     private var playbackEngine: AVAudioEngine?
     private let denoiser = Denoiser()
     /// 200 ms jitter cushion before playback starts: capture taps and the
@@ -282,7 +282,7 @@ public final class LiveEngine {
         if isRunning {
             let captureAlive = usingVPIO
                 ? VoiceProcessingCapture.shared.isAlive
-                : captureEngine?.isRunning == true
+                : halCapture?.isRunning == true
             return captureAlive && playbackEngine?.isRunning == true
         }
         return CFAbsoluteTimeGetCurrent() - startInitiatedAt < 3.0
@@ -349,39 +349,42 @@ public final class LiveEngine {
         voice.reset()
         os_unfair_lock_lock(&levelLock); _sessionPeak = 0; os_unfair_lock_unlock(&levelLock)
 
-        // Playback engine is fresh every session; capture is either a fresh
-        // engine (plain path) or the process-wide VPIO unit (echo cancel).
+        // Playback engine is fresh every session; capture is a raw AUHAL
+        // unit (plain path) or the process-wide VPIO unit (echo cancel).
+        // AVAudioEngine is never used for capture: its input node's client
+        // format silently tracks the SYSTEM DEFAULT device rather than the
+        // pinned one and renegotiates mid-start — the root of a family of
+        // field failures ("format mismatch" installs, -10868 starts,
+        // sessions that start clean but deliver nothing).
         usingVPIO = voiceProcessing
         let playback = AVAudioEngine()
         playbackEngine = playback
-        let capture: AVAudioEngine? = usingVPIO ? nil : AVAudioEngine()
-        captureEngine = capture
 
         // If anything below throws we must tear the half-built graph down —
         // otherwise the next start() would stack a second source node.
+        // `stage` tags the failing step so a field log pinpoints WHERE a
+        // start died, with the device formats in play at that moment.
+        var stage = "capture-unit"
         do {
-            if let capture {
-                // --- Plain capture engine, pinned to the selected device ---
-                let input = capture.inputNode
-                if let inDev = inputDevice {
-                    try setInputDevice(capture, deviceID: inDev.id)
-                }
-                // Sanity check only: a disappeared device reports 0 Hz.
-                // The value itself is NOT trustworthy — after pinning,
-                // inputFormat can still describe the system default device
-                // (often the virtual mic), so it must never be passed to
-                // installTap as an explicit format.
-                let f = input.inputFormat(forBus: 0)
-                guard f.sampleRate > 0, f.channelCount > 0 else {
-                    throw NSError(domain: "ode.live", code: -11,
-                                  userInfo: [NSLocalizedDescriptionKey:
-                                    "Input device has no valid format (was it disconnected?)"])
-                }
+            if !usingVPIO {
+                // --- Plain capture: raw AUHAL pinned to the device, client
+                // format set by US to the device's true HAL format. ---
+                let cap = try HALCapture(deviceID: inputDevice?.id)
+                cap.onAudio = { [weak self] buffer in self?.processCaptured(buffer) }
+                halCapture = cap
+            }
+
+            // --- Playback graph. Pin the output device BEFORE building the
+            // graph: a graph built against one device and re-pointed later
+            // can keep the old device's rate and drain the ring at the
+            // wrong speed (heard as slowed, constantly-skipping audio). ---
+            if let dev = outputDevice {
+                stage = "output-device"
+                try setOutputDevice(playback, deviceID: dev.id)
             }
 
             let fmt = AudioIO.monoFormat
-
-            // --- Playback graph: source node pulls denoised audio from the ring ---
+            // Source node pulls denoised audio from the ring.
             let node = AVAudioSourceNode(format: fmt) { [ring] _, _, frameCount, audioBufferList in
                 let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
                 let n = Int(frameCount)
@@ -391,40 +394,21 @@ public final class LiveEngine {
                 return noErr
             }
             sourceNode = node
+            stage = "playback-graph"
             try catchingObjCException {
                 playback.attach(node)
                 playback.connect(node, to: playback.mainMixerNode, format: fmt)
             }
 
-            if let dev = outputDevice {
-                try setOutputDevice(playback, deviceID: dev.id)
-            }
-
             captureConverter = nil  // fresh converter state per session
-            if let capture {
-                // --- Capture tap: mic -> (process queue: denoise) -> ring ---
-                // format: nil — the tap follows the bus's true hardware
-                // format. Passing inputFormat here is unreliable (see above)
-                // and made every start fail with "format mismatch" whenever
-                // the system default input differed from the pinned device;
-                // convertToMono48k handles whatever format arrives. The guard
-                // remains for formats AVFAudio still raises on (device gone).
-                try catchingObjCException {
-                    capture.inputNode.installTap(onBus: 0, bufferSize: 480,
-                                                 format: nil) { [weak self] buffer, _ in
-                        self?.processCaptured(buffer)
-                    }
-                }
-                capture.prepare()
-                playback.prepare()
-                try playback.start()
-                try capture.start()
-            } else {
+            playback.prepare()
+            stage = "playback-start"
+            try playback.start()
+            if usingVPIO {
                 // --- VPIO capture: shared unit, initialized once at launch.
                 // It always follows the system default input (VPIO manages
                 // its own device pair; pinning breaks it).
-                playback.prepare()
-                try playback.start()
+                stage = "vpio-start"
                 try VoiceProcessingCapture.shared.start { [weak self] buffer in
                     self?.processCaptured(buffer)
                 }
@@ -433,18 +417,31 @@ public final class LiveEngine {
                     guard CFAbsoluteTimeGetCurrent() - self.startedAtTime > 1.0 else { return }
                     self.onConfigurationChange?()
                 }
+            } else {
+                stage = "capture-start"
+                try halCapture?.start()
             }
         } catch {
             startInitiatedAt = 0  // failed starts get no health grace
+            // Snapshot the formats in play — a start that only fails with
+            // certain devices (e.g. Bluetooth in 24 kHz hands-free mode) is
+            // undiagnosable from the bare OSStatus alone.
+            let inFmt = halCapture?.format
+            let outFmt = playback.outputNode.outputFormat(forBus: 0)
+            let detail = "at \(stage) [in: \(Self.describe(inFmt)) out: \(Self.describe(outFmt))]"
             teardown()
-            throw error
+            throw NSError(domain: "ode.live", code: (error as NSError).code,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "\(error.localizedDescription) \(detail)"])
         }
 
-        // Engines stop themselves when the configuration changes (device
-        // unplugged, sample-rate change). Surface that so the owner can restart
-        // the loop instead of silently going dead mid-call.
+        // The playback engine stops itself when the configuration changes
+        // (device unplugged, sample-rate change). Surface that so the owner
+        // can restart the loop instead of silently going dead mid-call.
+        // (Capture-side death shows as a silent path; the owner's zombie
+        // watchdog reconciles it.)
         let nc = NotificationCenter.default
-        for engine in [capture, playback].compactMap({ $0 }) {
+        for engine in [playback] {
             configObservers.append(nc.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
             ) { [weak self] _ in
@@ -528,6 +525,12 @@ public final class LiveEngine {
         Self.diagnostic(line)
     }
 
+    private static func describe(_ format: AVAudioFormat?) -> String {
+        guard let format else { return "n/a" }
+        return "\(Int(format.sampleRate))Hz/\(format.channelCount)ch"
+    }
+
+
     /// Append a timestamped line to the field-diagnostics log (NSLog mirror).
     /// Unified-log access has proven unreliable when debugging in the field.
     public static func diagnostic(_ message: String) {
@@ -560,8 +563,7 @@ public final class LiveEngine {
             VoiceProcessingCapture.shared.stop()
             usingVPIO = false
         }
-        captureEngine?.inputNode.removeTap(onBus: 0)
-        captureEngine?.stop()
+        halCapture?.dispose()
         // Drain in-flight inference before touching the denoiser's state.
         processQueue.sync {}
         _ = denoiser.flushStreaming()
@@ -570,7 +572,7 @@ public final class LiveEngine {
         voice.reset()
         playbackEngine?.stop()
         sourceNode = nil
-        captureEngine = nil
+        halCapture = nil
         playbackEngine = nil
         ring.reset()
         os_unfair_lock_lock(&levelLock); _level = 0; os_unfair_lock_unlock(&levelLock)
@@ -598,24 +600,4 @@ public final class LiveEngine {
         }
     }
 
-    /// Route an AVAudioEngine's input to a specific CoreAudio device, so ODE
-    /// always captures from a chosen real microphone rather than whatever the
-    /// system default input happens to be (which could be the virtual mic).
-    private func setInputDevice(_ engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
-        guard let unit = engine.inputNode.audioUnit else {
-            throw NSError(domain: "ode.live", code: -13,
-                          userInfo: [NSLocalizedDescriptionKey:
-                            "Input node has no audio unit (cannot pin input device)"])
-        }
-        var dev = deviceID
-        let status = AudioUnitSetProperty(unit,
-                                          kAudioOutputUnitProperty_CurrentDevice,
-                                          kAudioUnitScope_Global, 0,
-                                          &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
-        if status != noErr {
-            throw NSError(domain: "ode.live", code: Int(status),
-                          userInfo: [NSLocalizedDescriptionKey:
-                                        "Could not set input device (OSStatus \(status))"])
-        }
-    }
 }
