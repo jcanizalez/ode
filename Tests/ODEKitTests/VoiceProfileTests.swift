@@ -210,6 +210,33 @@ final class TranscriptVoiceSampleTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url!.path))
     }
 
+    /// Deleting one Q&A entry identifies it by id, so those ids must survive
+    /// a save/load round trip — otherwise the wrong answer gets deleted.
+    func testChatMessageIdsSurviveSaveAndLoad() {
+        var t = transcript(speakers: ["You"])
+        t.chat = [ChatMessage(question: "what did Abel mention?", answer: "permissions"),
+                  ChatMessage(question: "typo qustion", answer: "unclear"),
+                  ChatMessage(question: "who owns the PR?", answer: "Andres")]
+        let ids = t.chat.map(\.id)
+        store.save(t)
+
+        guard let loaded = store.load().first(where: { $0.id == t.id }) else {
+            return XCTFail("transcript must reload")
+        }
+        XCTAssertEqual(loaded.chat.map(\.id), ids)
+
+        // Delete the middle one the way the UI does.
+        var edited = loaded
+        edited.chat.removeAll { $0.id == ids[1] }
+        store.save(edited)
+
+        guard let reloaded = store.load().first(where: { $0.id == t.id }) else {
+            return XCTFail("transcript must reload after deleting a Q&A")
+        }
+        XCTAssertEqual(reloaded.chat.map(\.question),
+                       ["what did Abel mention?", "who owns the PR?"])
+    }
+
     /// Transcripts written before voice samples existed must still load.
     func testTranscriptsWithoutVoiceSamplesStillDecode() {
         let json = """

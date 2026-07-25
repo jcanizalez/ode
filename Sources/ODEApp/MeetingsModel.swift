@@ -247,6 +247,15 @@ final class MeetingsModel: ObservableObject {
         NSPasteboard.general.setString(t.plainText(), forType: .string)
     }
 
+    /// Remove one saved exchange — a typo, or a question that came back
+    /// useless. Deletes only the entry; the meeting is untouched.
+    func deleteChat(_ msg: ChatMessage, in t: Transcript) {
+        guard var copy = transcripts.first(where: { $0.id == t.id }) else { return }
+        copy.chat.removeAll { $0.id == msg.id }
+        TranscriptStore.shared.save(copy)
+        replace(copy)
+    }
+
     func copyAnswer(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

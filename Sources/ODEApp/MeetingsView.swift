@@ -75,6 +75,68 @@ struct SpeakerAvatar: View {
     }
 }
 
+/// A saved exchange. The question leads and the answer is indented under
+/// it, so a column of these reads as a conversation rather than a stack of
+/// equal-weight paragraphs.
+private struct QACard: View {
+    let message: ChatMessage
+    /// Nil during a live meeting: that Q&A lives in the running transcriber
+    /// rather than on a saved transcript, so there is nothing to delete yet.
+    var onDelete: (() -> Void)?
+
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(message.question)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if let onDelete {
+                    // Dim but always present, brightening on hover: a
+                    // hover-only control is one nobody knows exists.
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(hovering ? 0.85 : 0.3))
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(
+                                Color.white.opacity(hovering ? 0.10 : 0)))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete this question and answer")
+                }
+            }
+            HStack(alignment: .top, spacing: 8) {
+                // A hairline rule instead of an icon: it scales with the
+                // answer and marks its extent, which a glyph cannot.
+                Capsule().fill(Color.accentColor.opacity(0.5))
+                    .frame(width: 2)
+                Text(message.answer)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .contextMenu {
+            if let onDelete {
+                Button("Delete Q&A", role: .destructive, action: onDelete)
+            }
+        }
+    }
+}
+
 /// The full "ODE — Meetings" window: meeting list + detail with Summary,
 /// Transcript and Action items tabs, plus on-device AI.
 struct MeetingsView: View {
@@ -331,7 +393,7 @@ struct MeetingsView: View {
                         transcriptTab(t)
                         if !t.chat.isEmpty {
                             section("LIVE Q&A") {
-                                ForEach(t.chat) { msg in qaCard(msg) }
+                                ForEach(t.chat) { msg in QACard(message: msg) }
                             }
                             .padding(.horizontal, 18)
                         }
@@ -347,33 +409,7 @@ struct MeetingsView: View {
         .background(Color(white: 0.07))
     }
 
-    /// A saved exchange. The question leads and the answer is indented under
-    /// it, so a column of these reads as a conversation rather than a stack
-    /// of equal-weight paragraphs.
-    private func qaCard(_ msg: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(msg.question)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .top, spacing: 8) {
-                // A hairline rule instead of an icon: it scales with the
-                // answer and marks its extent, which a glyph cannot.
-                Capsule().fill(Color.accentColor.opacity(0.5))
-                    .frame(width: 2)
-                Text(msg.answer)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
-    }
+    // (Saved exchanges render via QACard, below.)
 
     private func detailHeader(_ t: Transcript) -> some View {
         HStack(alignment: .top) {
@@ -549,7 +585,9 @@ struct MeetingsView: View {
 
             if !t.chat.isEmpty {
                 section("Q&A") {
-                    ForEach(t.chat) { qaCard($0) }
+                    ForEach(t.chat) { msg in
+                        QACard(message: msg) { model.deleteChat(msg, in: t) }
+                    }
                 }
             }
         }
