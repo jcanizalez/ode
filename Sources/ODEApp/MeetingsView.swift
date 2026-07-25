@@ -286,7 +286,7 @@ struct MeetingsView: View {
                     case .analytics: analyticsTab(t)
                     }
                 }
-                askBar(t)
+                askSection(t)
             }
             .background(Color(white: 0.07))
             .translationDriver(model: model) { model.selected }
@@ -342,27 +342,35 @@ struct MeetingsView: View {
                     withAnimation { proxy.scrollTo("live-bottom", anchor: .bottom) }
                 }
             }
-            askBar(t, live: true)
+            askSection(t, live: true)
         }
         .background(Color(white: 0.07))
     }
 
+    /// A saved exchange. The question leads and the answer is indented under
+    /// it, so a column of these reads as a conversation rather than a stack
+    /// of equal-weight paragraphs.
     private func qaCard(_ msg: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .top, spacing: 7) {
-                Image(systemName: "questionmark.circle.fill")
-                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
-                Text(msg.question).font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 7) {
+            Text(msg.question)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 8) {
+                // A hairline rule instead of an icon: it scales with the
+                // answer and marks its extent, which a glyph cannot.
+                Capsule().fill(Color.accentColor.opacity(0.5))
+                    .frame(width: 2)
+                Text(msg.answer)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(alignment: .top, spacing: 7) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12)).foregroundStyle(Color.accentColor)
-                Text(msg.answer).font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
-            }
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
     }
@@ -541,25 +549,7 @@ struct MeetingsView: View {
 
             if !t.chat.isEmpty {
                 section("Q&A") {
-                    ForEach(t.chat) { msg in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(alignment: .top, spacing: 7) {
-                                Image(systemName: "questionmark.circle.fill")
-                                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
-                                Text(msg.question).font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.white).fixedSize(horizontal: false, vertical: true)
-                            }
-                            HStack(alignment: .top, spacing: 7) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 12)).foregroundStyle(Color.accentColor)
-                                Text(msg.answer).font(.system(size: 13))
-                                    .foregroundStyle(.white.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
-                    }
+                    ForEach(t.chat) { qaCard($0) }
                 }
             }
         }
@@ -697,30 +687,118 @@ struct MeetingsView: View {
 
     // MARK: - Ask bar
 
-    private func askBar(_ t: Transcript, live: Bool = false) -> some View {
-        HStack(spacing: 10) {
+    /// The answer panel plus the composer, as one block at the foot of the
+    /// pane. Both live in the layout flow — the answer used to be an
+    /// `.overlay`, and overlays take no space: a long answer covered the
+    /// meeting behind it, ran off the top of the window, and could be
+    /// neither scrolled nor dismissed.
+    private func askSection(_ t: Transcript, live: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            if model.askedQuestion != nil {
+                Divider().overlay(Color.white.opacity(0.08))
+                answerPanel()
+            }
+            composer(t, live: live)
+        }
+        .animation(.easeOut(duration: 0.18), value: model.askedQuestion)
+    }
+
+    /// The current exchange. The question stays pinned as the header while
+    /// the answer scrolls beneath it: a long answer should never leave you
+    /// wondering what you asked.
+    @ViewBuilder private func answerPanel() -> some View {
+        if let asked = model.askedQuestion {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(asked)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if let a = model.answer {
+                        Button { model.copyAnswer(a) } label: {
+                            Text(model.answerCopied ? "Copied" : "Copy")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(model.answerCopied
+                                                 ? .green : Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button { model.clearAsk() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close answer")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 9)
+
+                answerBody()
+            }
+            .background(Color(white: 0.11))
+        }
+    }
+
+    @ViewBuilder private func answerBody() -> some View {
+        if model.asking {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Reading the transcript…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            .padding(.horizontal, 16).padding(.bottom, 14)
+        } else if let error = model.askError {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16).padding(.bottom, 14)
+        } else if let a = model.answer {
+            // Capped and internally scrollable: the answer is a guest in the
+            // window, not the owner of it.
+            ScrollView {
+                Text(a)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 14)
+            }
+            .frame(maxHeight: 220)
+        }
+    }
+
+    private func composer(_ t: Transcript, live: Bool = false) -> some View {
+        let canSend = !model.question.trimmingCharacters(in: .whitespaces).isEmpty
+            && !model.asking
+        return HStack(spacing: 10) {
             Image(systemName: "sparkles").foregroundStyle(Color.accentColor.opacity(0.8))
             TextField(live ? "Ask about the meeting so far…" : "Ask anything about this meeting…",
                       text: $model.question)
                 .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(.white)
                 .onSubmit { live ? model.askLive(t) : model.ask(t) }
-            if model.asking { ProgressView().controlSize(.small) }
             Button { live ? model.askLive(t) : model.ask(t) } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.system(size: 22)).foregroundStyle(Color.accentColor)
-            }.buttonStyle(.plain).disabled(model.question.isEmpty || model.asking)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(canSend ? Color.accentColor : .white.opacity(0.22))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
-        .overlay(alignment: .top) {
-            if let a = model.answer {
-                Text(a).font(.system(size: 13)).foregroundStyle(.white)
-                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.13)))
-                    .padding(.horizontal, 14).offset(y: -8).transition(.opacity)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .alignmentGuide(.top) { $0[.bottom] }
-            }
-        }
         .padding(14)
     }
 

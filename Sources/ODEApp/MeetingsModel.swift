@@ -11,7 +11,12 @@ final class MeetingsModel: ObservableObject {
 
     @Published var transcripts: [Transcript] = []
     @Published var selectedID: Transcript.ID? {
-        didSet { if oldValue != selectedID { stopPlayback() } }
+        didSet {
+            guard oldValue != selectedID else { return }
+            stopPlayback()
+            // An answer belongs to the meeting it was asked about.
+            clearAsk()
+        }
     }
     @Published var search = ""
     @Published var filter: Filter = .all
@@ -21,12 +26,19 @@ final class MeetingsModel: ObservableObject {
     @Published var asking = false
     @Published var question = ""
     @Published var answer: String?
+    /// The question behind `answer`, kept so the answer can be shown with
+    /// what was asked — `question` is cleared on submit to empty the field.
+    @Published var askedQuestion: String?
+    /// A failed ask. Separate from `answer`: an error dressed as an answer
+    /// reads as though the model said it.
+    @Published var askError: String?
     @Published var aiError: String?
 
     /// Segment to scroll to (and briefly highlight) in the transcript tab.
     @Published var scrollTarget: TranscriptSegment.ID?
     @Published var draftingRecap = false
     @Published var recapCopied = false
+    @Published var answerCopied = false
 
     // MARK: - Translated captions (live + retro; Apple Translation, on-device)
 
@@ -151,19 +163,21 @@ final class MeetingsModel: ObservableObject {
     /// attached to the meeting and persisted when it's saved.
     func askLive(_ t: Transcript) {
         guard #available(macOS 26.0, *) else { aiError = aiUnavailableReason; return }
-        let q = question
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         asking = true
         answer = nil
+        askError = nil
+        askedQuestion = q
+        question = ""
         Task {
             do {
                 let a = try await MeetingAI.answer(q, about: t, userName: self.userFirstName)
                 self.answer = a
-                self.question = ""
                 self.controller?.recordLiveChat(question: q, answer: a)
                 self.refreshLive()
             } catch {
-                self.answer = "Couldn't answer: \(error.localizedDescription)"
+                self.askError = error.localizedDescription
             }
             self.asking = false
         }
@@ -233,6 +247,15 @@ final class MeetingsModel: ObservableObject {
         NSPasteboard.general.setString(t.plainText(), forType: .string)
     }
 
+    func copyAnswer(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        answerCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.answerCopied = false
+        }
+    }
+
     func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting([TranscriptStore.shared.directory])
     }
@@ -260,17 +283,29 @@ final class MeetingsModel: ObservableObject {
         }
     }
 
+    /// Dismiss the current exchange. The answer is already saved to the
+    /// meeting's Q&A, so this hides rather than discards.
+    func clearAsk() {
+        answer = nil
+        askedQuestion = nil
+        askError = nil
+    }
+
     func ask(_ t: Transcript) {
         guard #available(macOS 26.0, *) else { aiError = aiUnavailableReason; return }
-        let q = question
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         asking = true
         answer = nil
+        askError = nil
+        // Show the question straight away: waiting is more legible when you
+        // can see what you asked.
+        askedQuestion = q
+        question = ""
         Task {
             do {
                 let a = try await MeetingAI.answer(q, about: t, userName: self.userFirstName)
                 self.answer = a
-                self.question = ""
                 // Persist the Q&A so it survives restarts.
                 if var copy = self.transcripts.first(where: { $0.id == t.id }) {
                     copy.chat.append(ChatMessage(question: q, answer: a))
@@ -278,7 +313,7 @@ final class MeetingsModel: ObservableObject {
                     self.replace(copy)
                 }
             } catch {
-                self.answer = "Couldn't answer: \(error.localizedDescription)"
+                self.askError = error.localizedDescription
             }
             self.asking = false
         }
