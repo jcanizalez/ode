@@ -33,6 +33,9 @@ struct PanelView: View {
             if let warning = controller.micSilentWarning {
                 micWarningRow(warning)
             }
+            if let reason = controller.aiNotesSkipped {
+                aiWarningRow(reason)
+            }
             notesToggleRow
             meetingsRow
             footer
@@ -51,6 +54,42 @@ struct PanelView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.12))
+                .overlay(RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.orange.opacity(0.4), lineWidth: 1)))
+    }
+
+    /// Meeting notes were skipped because Apple Intelligence is off or
+    /// ineligible. The transcript is still saved — say that, or the message
+    /// reads as "the meeting was lost".
+    private func aiWarningRow(_ reason: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Meeting notes were skipped — the transcript was saved.")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Button {
+                controller.aiNotesSkipped = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .buttonStyle(.plain)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)

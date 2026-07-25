@@ -291,11 +291,42 @@ final class MeetingsModel: ObservableObject {
     }
 
     /// Rename a diarized speaker across the transcript ("Speaker 1" → "Igor").
-    func renameSpeaker(in t: Transcript, from old: String, to new: String) {
+    /// Rename a speaker, optionally remembering their voice so future
+    /// meetings label them by name instead of "Speaker N".
+    func renameSpeaker(in t: Transcript, from old: String, to new: String,
+                       rememberVoice: Bool = false) {
         guard var copy = transcripts.first(where: { $0.id == t.id }) else { return }
+        // Grab the sample before the rename moves it to the new label.
+        let sampleURL = rememberVoice
+            ? TranscriptStore.shared.voiceSampleURL(for: copy, speaker: old) : nil
         guard copy.renameSpeaker(old, to: new) else { return }
         TranscriptStore.shared.save(copy)
         replace(copy)
+        if let sampleURL {
+            // renameSpeaker trims, so the stored label is the trimmed name.
+            saveVoiceProfile(at: sampleURL,
+                             as: new.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    /// True when a voice sample was kept for this speaker, so naming them can
+    /// also teach ODE the voice.
+    func hasVoiceSample(_ t: Transcript, speaker: String) -> Bool {
+        TranscriptStore.shared.voiceSampleURL(for: t, speaker: speaker) != nil
+    }
+
+    /// True when ODE already recognises this name from a saved voice.
+    func isRemembered(_ name: String) -> Bool {
+        VoiceProfileStore.shared.all()
+            .contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    private func saveVoiceProfile(at url: URL, as name: String) {
+        guard let samples = try? AudioIO.readSamples(
+            url: url, sampleRate: VoiceProfileStore.sampleRate) else { return }
+        if VoiceProfileStore.shared.save(name: name, samples: samples) == nil {
+            aiError = String(localized: "That voice sample was too short to remember reliably. The rename was still applied.")
+        }
     }
 
     /// Jump the transcript tab to the segment nearest `seconds`.

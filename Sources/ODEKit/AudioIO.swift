@@ -4,17 +4,21 @@ public enum AudioIO {
     public static let sampleRate: Double = 48_000
 
     /// 48 kHz mono float format used throughout the engine.
-    public static var monoFormat: AVAudioFormat {
+    public static var monoFormat: AVAudioFormat { monoFormat(sampleRate: sampleRate) }
+
+    /// Mono float format at an arbitrary rate — voice enrollment works at
+    /// 16 kHz (what Sortformer consumes), the engine at 48 kHz.
+    public static func monoFormat(sampleRate rate: Double) -> AVAudioFormat {
         AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                      sampleRate: sampleRate,
+                      sampleRate: rate,
                       channels: 1,
                       interleaved: false)!
     }
 
     // MARK: - WAV reading
 
-    /// Reads any audio file and returns mono Float samples resampled to 48 kHz.
-    public static func readSamples(url: URL) throws -> [Float] {
+    /// Reads any audio file and returns mono Float samples at `rate`.
+    public static func readSamples(url: URL, sampleRate rate: Double = sampleRate) throws -> [Float] {
         let file = try AVAudioFile(forReading: url)
         let srcFormat = file.processingFormat
         let frameCount = AVAudioFrameCount(file.length)
@@ -23,12 +27,18 @@ public enum AudioIO {
             throw IOError.alloc
         }
         try file.read(into: srcBuffer)
-        return resampleToMono48k(srcBuffer)
+        return resampleToMono(srcBuffer, sampleRate: rate)
     }
 
     /// Convert an arbitrary PCM buffer to a flat array of 48 kHz mono floats.
     public static func resampleToMono48k(_ buffer: AVAudioPCMBuffer) -> [Float] {
-        let dstFormat = monoFormat
+        resampleToMono(buffer, sampleRate: sampleRate)
+    }
+
+    /// Convert an arbitrary PCM buffer to a flat array of mono floats at `rate`.
+    public static func resampleToMono(_ buffer: AVAudioPCMBuffer,
+                                      sampleRate rate: Double) -> [Float] {
+        let dstFormat = monoFormat(sampleRate: rate)
         if buffer.format == dstFormat {
             return bufferToArray(buffer)
         }
@@ -62,11 +72,12 @@ public enum AudioIO {
 
     // MARK: - WAV writing
 
-    /// Writes mono 48 kHz float samples to a 16-bit PCM WAV file.
-    public static func writeWav(samples: [Float], url: URL) throws {
+    /// Writes mono float samples to a 16-bit PCM WAV file at `rate`.
+    public static func writeWav(samples: [Float], url: URL,
+                                sampleRate rate: Double = sampleRate) throws {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: sampleRate,
+            AVSampleRateKey: rate,
             AVNumberOfChannelsKey: 1,
             AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsFloatKey: false,
@@ -78,7 +89,7 @@ public enum AudioIO {
         var i = 0
         while i < samples.count {
             let n = min(chunk, samples.count - i)
-            guard let buf = AVAudioPCMBuffer(pcmFormat: monoFormat,
+            guard let buf = AVAudioPCMBuffer(pcmFormat: monoFormat(sampleRate: rate),
                                              frameCapacity: AVAudioFrameCount(n)) else {
                 throw IOError.alloc
             }

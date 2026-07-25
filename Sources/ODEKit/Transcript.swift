@@ -77,6 +77,11 @@ public struct Transcript: Codable, Identifiable {
     /// Audio recording of the call, as a filename RELATIVE to the transcript
     /// store directory (the store can move; absolute paths go stale).
     public var recordingFile: String?
+    /// A few seconds of each unidentified speaker's voice, keyed by the label
+    /// they carry here ("Speaker 2") and valued by a filename relative to the
+    /// store directory. Kept so naming that speaker later — when you actually
+    /// know who was talking — can remember the voice for future meetings.
+    public var voiceSamples: [String: String]?
 
     public init(id: UUID = UUID(), title: String, startedAt: Date, endedAt: Date,
                 segments: [TranscriptSegment], sourceApp: String? = nil,
@@ -86,7 +91,8 @@ public struct Transcript: Codable, Identifiable {
                 decisions: [String]? = nil, openQuestions: [String]? = nil,
                 chapters: [Chapter]? = nil,
                 chat: [ChatMessage] = [],
-                recordingFile: String? = nil) {
+                recordingFile: String? = nil,
+                voiceSamples: [String: String]? = nil) {
         self.id = id
         self.title = title
         self.startedAt = startedAt
@@ -103,6 +109,7 @@ public struct Transcript: Codable, Identifiable {
         self.chapters = chapters
         self.chat = chat
         self.recordingFile = recordingFile
+        self.voiceSamples = voiceSamples
     }
 
     // MARK: - Codable migration
@@ -110,7 +117,7 @@ public struct Transcript: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, title, startedAt, endedAt, segments, sourceApp, attendees,
              starred, summary, keyPoints, actionItems, decisions,
-             openQuestions, chapters, chat, recordingFile
+             openQuestions, chapters, chat, recordingFile, voiceSamples
     }
 
     /// Custom decode so transcripts saved by older versions still load:
@@ -133,6 +140,7 @@ public struct Transcript: Codable, Identifiable {
         chapters = try c.decodeIfPresent([Chapter].self, forKey: .chapters)
         chat = try c.decodeIfPresent([ChatMessage].self, forKey: .chat) ?? []
         recordingFile = try c.decodeIfPresent(String.self, forKey: .recordingFile)
+        voiceSamples = try c.decodeIfPresent([String: String].self, forKey: .voiceSamples)
         if let items = try? c.decodeIfPresent([ActionItem].self, forKey: .actionItems) {
             actionItems = items
         } else if let legacy = try? c.decodeIfPresent([String].self, forKey: .actionItems) {
@@ -187,6 +195,13 @@ public struct Transcript: Codable, Identifiable {
             for i in actionItems!.indices where actionItems![i].owner == old {
                 actionItems![i].owner = trimmed
             }
+        }
+        // Carry the voice sample to the new label, or the audio becomes
+        // unreachable the moment the speaker is named — which is exactly
+        // when it becomes worth keeping.
+        if let file = voiceSamples?[old] {
+            voiceSamples?[old] = nil
+            voiceSamples?[trimmed] = file
         }
         return true
     }
@@ -304,6 +319,9 @@ public final class TranscriptStore {
         if let url = recordingURL(for: transcript) {
             try? FileManager.default.removeItem(at: url)
         }
+        for name in transcript.voiceSamples?.values ?? [:].values {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
     }
 
     /// Absolute URL of the call recording, nil when the meeting has none or
@@ -312,6 +330,37 @@ public final class TranscriptStore {
         guard let name = t.recordingFile else { return nil }
         let url = directory.appendingPathComponent(name)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Absolute URL of a speaker's kept voice sample, nil when there is none
+    /// or the file has since disappeared.
+    public func voiceSampleURL(for t: Transcript, speaker: String) -> URL? {
+        guard let name = t.voiceSamples?[speaker] else { return nil }
+        let url = directory.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Write the per-speaker voice samples gathered during a meeting and
+    /// return the label→filename map to store on the transcript. Samples are
+    /// sidecars of the transcript, so they are deleted along with it.
+    public func writeVoiceSamples(_ samples: [String: [Float]],
+                                  for t: Transcript) -> [String: String] {
+        var map: [String: String] = [:]
+        let stem = fileStem(for: t)
+        for (label, audio) in samples {
+            // Labels are "Speaker 1"/"Speaker 2" — keep the filename tame.
+            let slug = label.replacingOccurrences(of: " ", with: "-").lowercased()
+            let name = "\(stem)_voice-\(slug).wav"
+            do {
+                try AudioIO.writeWav(samples: audio,
+                                     url: directory.appendingPathComponent(name),
+                                     sampleRate: VoiceProfileStore.sampleRate)
+                map[label] = name
+            } catch {
+                NSLog("ODE: failed to save voice sample for \(label): \(error.localizedDescription)")
+            }
+        }
+        return map
     }
 
     /// Shared basename for a transcript's sidecar files (.json/.txt/.m4a).

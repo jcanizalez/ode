@@ -87,6 +87,7 @@ struct SettingsView: View {
 
     @State private var pane: SettingsPane = .general
     @State private var nameDraft = UserDefaults.standard.string(forKey: "ode.userName") ?? ""
+    @State private var voices: [VoiceProfile] = []
 
     var body: some View {
         HStack(spacing: 0) {
@@ -283,6 +284,84 @@ struct SettingsView: View {
                          hint: "Used by Detect speakers to tell remote participants apart. Fetched once, then fully offline.",
                          cached: SpeakerDiarizer.modelIsCached,
                          name: "diarizer") { controller.downloadDiarizerModel() }
+            }
+            sectionLabel("REMEMBERED VOICES")
+                .padding(.top, 6)
+            voicesCard
+            sectionLabel("APPLE INTELLIGENCE")
+                .padding(.top, 6)
+            appleIntelligenceCard
+        }
+        .onAppear { voices = VoiceProfileStore.shared.all() }
+        .onReceive(NotificationCenter.default.publisher(for: .odeVoiceProfilesChanged)) { _ in
+            voices = VoiceProfileStore.shared.all()
+        }
+    }
+
+    /// Voices ODE has been taught, and the only place to forget one.
+    private var voicesCard: some View {
+        card {
+            if voices.isEmpty {
+                settingRow(icon: "waveform",
+                           hint: "Name a speaker in a meeting and ODE offers to remember their voice. After that it labels them by name automatically, instead of \"Speaker 1\". The samples are a few seconds each and never leave this Mac.") {
+                    Text("No voices remembered yet").rowLabelStyle()
+                } trailing: {
+                    EmptyView()
+                }
+            } else {
+                ForEach(voices) { voice in
+                    settingRow(icon: "waveform") {
+                        Text(voice.name).rowLabelStyle()
+                    } trailing: {
+                        HStack(spacing: 10) {
+                            Text("\(Int(voice.seconds.rounded()))s")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.4))
+                            Button("Forget") { VoiceProfileStore.shared.delete(voice.id) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Meeting notes, titles, recap emails and Ask all run on Apple
+    /// Intelligence. When it is off there is nothing ODE can substitute, so
+    /// say so here rather than letting those features quietly do nothing.
+    private var appleIntelligenceCard: some View {
+        card {
+            settingRow(icon: "sparkles",
+                       hint: "Powers meeting notes, AI titles, recap emails and Ask — all on-device. Transcription, noise cancellation and speaker detection work without it.") {
+                Text("On-device AI").rowLabelStyle()
+            } trailing: {
+                if let reason = controller.aiUnavailableReason {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange.opacity(0.9))
+                            .help(reason)
+                        Button("Open Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?AppleIntelligence") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                } else {
+                    Label("Ready", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.green.opacity(0.85))
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            if let reason = controller.aiUnavailableReason {
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange.opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 8)
             }
         }
     }

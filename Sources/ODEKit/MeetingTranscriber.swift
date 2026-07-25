@@ -57,7 +57,12 @@ public final class MeetingTranscriber {
         // Diarization is additive — if its model fails to load, the meeting
         // still transcribes with plain "Others" labels.
         if let diarizer {
-            do { try await diarizer.start() } catch {
+            do {
+                try await diarizer.start()
+                // Prime with remembered voices before a single buffer is fed:
+                // enrollment resets the timeline, so it cannot happen later.
+                diarizer.enroll(VoiceProfileStore.shared.enrollable())
+            } catch {
                 NSLog("ODE: speaker detection unavailable: \(error.localizedDescription)")
             }
         }
@@ -149,10 +154,21 @@ public final class MeetingTranscriber {
             autoTitle = await MeetingAI.title(forSegments: segs)
         }
         let df = DateFormatter(); df.dateFormat = "h:mm a"
-        let transcript = Transcript(title: autoTitle ?? "\(df.string(from: startedAt)) Meeting",
+        var transcript = Transcript(title: autoTitle ?? "\(df.string(from: startedAt)) Meeting",
                                     startedAt: startedAt, endedAt: ended,
                                     segments: segs, sourceApp: sourceApp,
                                     attendees: attendees, chat: chat)
+        // Keep each unidentified speaker's voice alongside the transcript, so
+        // naming them later can remember them. Only speakers who actually
+        // appear in the transcript are worth keeping.
+        if let diarizer {
+            let spoken = Set(segs.map(\.speaker))
+            let samples = diarizer.voiceSamples().filter { spoken.contains($0.key) }
+            if !samples.isEmpty {
+                transcript.voiceSamples = TranscriptStore.shared
+                    .writeVoiceSamples(samples, for: transcript)
+            }
+        }
         TranscriptStore.shared.save(transcript)
         return transcript
     }

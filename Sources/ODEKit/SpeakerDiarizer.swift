@@ -80,11 +80,35 @@ public final class SpeakerDiarizer {
         diarizer.initialize(models: models)
     }
 
+    /// Prime the diarizer with remembered voices, so their slots come back
+    /// already named ("Igor") instead of positional ("Speaker 2").
+    ///
+    /// Must run after `start()` and before any real audio: enrollment resets
+    /// the timeline, so priming mid-meeting would throw away the meeting.
+    /// Enrollment is additive — a voice that fails to prime just means that
+    /// person stays "Speaker N" for this meeting.
+    public func enroll(_ voices: [(name: String, samples: [Float])]) {
+        guard !voices.isEmpty else { return }
+        queue.sync { [diarizer] in
+            for voice in voices where !voice.samples.isEmpty {
+                do {
+                    _ = try diarizer.enrollSpeaker(withAudio: voice.samples,
+                                                   named: voice.name)
+                } catch {
+                    NSLog("ODE: could not enroll voice '\(voice.name)': \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
     /// Feed one buffer of incoming-call audio (any format).
     public func append(_ buffer: AVAudioPCMBuffer) {
         guard let samples = convertTo16kMono(buffer), !samples.isEmpty else { return }
-        queue.async { [diarizer] in
-            _ = try? diarizer.process(samples: samples)
+        queue.async { [weak self] in
+            guard let self else { return }
+            _ = try? self.diarizer.process(samples: samples)
+            self.retainAudioLocked(samples)
+            self.topUpSnippetsLocked()
         }
     }
 
@@ -95,8 +119,9 @@ public final class SpeakerDiarizer {
         }
     }
 
-    /// Dominant speaker within [start, end] seconds of stream time, e.g.
-    /// "Speaker 2" — nil when no speaker activity is known for the interval.
+    /// Dominant speaker within [start, end] seconds of stream time — an
+    /// enrolled name ("Igor") when the slot was primed with a remembered
+    /// voice, otherwise "Speaker 2". Nil when no speaker activity is known.
     public func speakerLabel(from start: TimeInterval, to end: TimeInterval) -> String? {
         guard end > start else { return nil }
         return queue.sync {
@@ -113,7 +138,90 @@ public final class SpeakerDiarizer {
                 }
             }
             guard let best else { return nil }
-            return "Speaker \(best.index + 1)"
+            return labelLocked(index: best.index)
+        }
+    }
+
+    // MARK: - Voice snippets
+
+    /// Recent audio kept so a speaker can be turned into a remembered voice
+    /// after the meeting, when the user actually knows who was talking.
+    /// Bounded: 30 s of 16 kHz mono is ~1.9 MB.
+    private static let windowSeconds = 30.0
+    private var window: [Float] = []
+    /// Absolute sample index of `window[0]`.
+    private var windowStart = 0
+    /// Accumulated per-slot speech, and how far into the stream each slot
+    /// has already been harvested (so audio is never copied twice).
+    private var snippets: [Int: [Float]] = [:]
+    private var harvested: [Int: Int] = [:]
+
+    /// Voice samples gathered this meeting, keyed by the label the transcript
+    /// uses. Already-enrolled speakers are excluded: ODE knows them, and
+    /// re-saving a name from its own enrollment audio would compound drift.
+    public func voiceSamples() -> [String: [Float]] {
+        queue.sync {
+            var out: [String: [Float]] = [:]
+            for (index, samples) in snippets {
+                guard diarizer.timeline.speakers[index]?.name == nil else { continue }
+                guard Double(samples.count) / Self.feedFormat.sampleRate
+                        >= VoiceProfileStore.minimumSeconds else { continue }
+                out[labelLocked(index: index)] = samples
+            }
+            return out
+        }
+    }
+
+    /// Label for a slot: its enrolled name, else the positional fallback.
+    private func labelLocked(index: Int) -> String {
+        if let name = diarizer.timeline.speakers[index]?.name, !name.isEmpty {
+            return name
+        }
+        return "Speaker \(index + 1)"
+    }
+
+    /// Keep the newest audio, dropping the oldest past the window.
+    private func retainAudioLocked(_ samples: [Float]) {
+        window.append(contentsOf: samples)
+        let cap = Int(Self.windowSeconds * Self.feedFormat.sampleRate)
+        if window.count > cap {
+            let drop = window.count - cap
+            window.removeFirst(drop)
+            windowStart += drop
+        }
+    }
+
+    /// Copy each unnamed speaker's finalized speech out of the window until
+    /// it has enough for enrollment. Only finalized segments are harvested —
+    /// tentative ones can still be reassigned to a different speaker, and a
+    /// snippet of the wrong person is worse than no snippet.
+    private func topUpSnippetsLocked() {
+        let rate = Self.feedFormat.sampleRate
+        let target = Int(VoiceProfileStore.maximumSeconds * rate)
+        let windowEnd = windowStart + window.count
+        for (index, speaker) in diarizer.timeline.speakers {
+            guard speaker.name == nil else { continue }
+            var have = snippets[index] ?? []
+            guard have.count < target else { continue }
+            var from = harvested[index] ?? 0
+            // Only segments past the harvest point can contribute. Filtering
+            // first keeps the sort proportional to new speech rather than to
+            // the whole meeting — this runs on every buffer, and
+            // `finalizedSegments` grows all session.
+            let pending = speaker.finalizedSegments.filter {
+                Int(Double($0.endTime) * rate) > from
+            }
+            guard !pending.isEmpty else { continue }
+            for seg in pending.sorted(by: { $0.startTime < $1.startTime }) {
+                let s = max(Int(Double(seg.startTime) * rate), max(from, windowStart))
+                let e = min(Int(Double(seg.endTime) * rate), windowEnd)
+                guard e > s else { continue }
+                have.append(contentsOf: window[(s - windowStart)..<(e - windowStart)])
+                from = e
+                if have.count >= target { break }
+            }
+            snippets[index] = have.count > target ? Array(have.prefix(target)) : have
+            harvested[index] = from
         }
     }
 

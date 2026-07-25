@@ -42,6 +42,9 @@ struct MeetingsView: View {
     @State private var confirmDelete = false
     @State private var renameTarget: String?
     @State private var renameText = ""
+    /// Whether the speaker being renamed has a kept voice sample, so the
+    /// sheet can offer to remember it.
+    @State private var renameHasVoice = false
 
     init(controller: ODEController? = nil, showLive: Bool = false) {
         _model = StateObject(wrappedValue: MeetingsModel(controller: controller,
@@ -56,19 +59,23 @@ struct MeetingsView: View {
         .frame(minWidth: 820, minHeight: 540)
         .background(Color(white: 0.07))
         .onAppear { model.reload() }
-        .alert("Rename \"\(renameTarget ?? "")\"",
+        .alert("Name \"\(renameTarget ?? "")\"",
                isPresented: Binding(get: { renameTarget != nil },
                                     set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $renameText)
-            Button("Rename") {
-                if let old = renameTarget, let t = model.selected {
-                    model.renameSpeaker(in: t, from: old, to: renameText)
-                }
-                renameTarget = nil
+            // When a voice sample was kept, remembering it is the better
+            // default: it is the whole point of naming someone.
+            if renameHasVoice {
+                Button("Name & Remember Voice") { applyRename(rememberVoice: true) }
+                Button("Name Only") { applyRename(rememberVoice: false) }
+            } else {
+                Button("Rename") { applyRename(rememberVoice: false) }
             }
             Button("Cancel", role: .cancel) { renameTarget = nil }
         } message: {
-            Text("The new name appears in the transcript, talk time and action items.")
+            Text(renameHasVoice
+                 ? "The name appears in the transcript, talk time and action items. ODE kept a few seconds of this voice — remember it and future meetings will label them by name automatically."
+                 : "The new name appears in the transcript, talk time and action items.")
         }
     }
 
@@ -328,13 +335,9 @@ struct MeetingsView: View {
                 HStack(spacing: 10) {
                     Text(dateText(t.startedAt)).foregroundStyle(.white.opacity(0.5))
                     Text(durationText(t.duration)).foregroundStyle(.white.opacity(0.5))
-                    HStack(spacing: -5) {
-                        ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 20) }
-                    }
-                    Text("\(t.speakers.count) \(t.speakers.count == 1 ? "person" : "people")")
-                        .foregroundStyle(.white.opacity(0.5))
                 }
                 .font(.system(size: 12))
+                peopleRow(t)
             }
             Spacer()
             Button { model.toggleStar(t) } label: {
@@ -848,6 +851,64 @@ struct MeetingsView: View {
             Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             Text(label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
         }
+    }
+
+    // MARK: - People
+
+    /// Everyone in the meeting as a chip you can click to rename. This used
+    /// to be a right-click context menu only, which meant the feature may as
+    /// well not have existed — nobody discovers a hidden menu on a name.
+    private func peopleRow(_ t: Transcript) -> some View {
+        HStack(spacing: 6) {
+            ForEach(t.speakers, id: \.self) { speakerChip(t, speaker: $0) }
+        }
+    }
+
+    private func speakerChip(_ t: Transcript, speaker: String) -> some View {
+        let editable = speaker != "You"
+        let remembered = editable && model.isRemembered(speaker)
+        return Button {
+            beginRename(speaker, in: t)
+        } label: {
+            HStack(spacing: 5) {
+                SpeakerAvatar(speaker: speaker, size: 18)
+                Text(speaker).font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                if remembered {
+                    // ODE knows this voice and will label them automatically
+                    // in future meetings.
+                    Image(systemName: "waveform")
+                        .font(.system(size: 9)).foregroundStyle(Color.accentColor)
+                } else if editable {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 9)).foregroundStyle(.white.opacity(0.35))
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().fill(Color.white.opacity(editable ? 0.07 : 0.03)))
+        }
+        .buttonStyle(.plain)
+        .disabled(!editable)
+        .help(remembered ? "ODE remembers this voice — click to rename"
+                         : (editable ? "Click to name this speaker" : "That's you"))
+        .contextMenu { renameMenu(t, speaker: speaker) }
+    }
+
+    private func applyRename(rememberVoice: Bool) {
+        if let old = renameTarget, let t = model.selected {
+            model.renameSpeaker(in: t, from: old, to: renameText,
+                                rememberVoice: rememberVoice)
+        }
+        renameTarget = nil
+    }
+
+    /// Open the rename sheet, prefilled: a real name is there to be edited,
+    /// but "Speaker 2" is a placeholder you'd only have to clear.
+    private func beginRename(_ speaker: String, in t: Transcript) {
+        guard speaker != "You" else { return }
+        renameTarget = speaker
+        renameText = speaker.hasPrefix("Speaker ") ? "" : speaker
+        renameHasVoice = model.hasVoiceSample(t, speaker: speaker)
     }
 
     /// Context-menu entry to rename a diarized speaker ("Speaker 1" → "Igor").

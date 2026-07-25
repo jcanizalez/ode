@@ -77,6 +77,27 @@ final class ODEController: ObservableObject {
     /// Set when the mic path has been capturing for a while but has heard
     /// literally nothing — dead capture (permission/device), never silence.
     @Published var micSilentWarning: String?
+
+    /// Set when a finished meeting could not be summarized because on-device
+    /// AI is unavailable. Cleared when the next meeting starts, or when the
+    /// user opens the notes.
+    @Published var aiNotesSkipped: String?
+
+    /// Why on-device AI can't run, or nil when it's ready. Computed on every
+    /// read: Apple Intelligence can be switched on in System Settings without
+    /// relaunching ODE, and a cached "unavailable" would outlive the fix.
+    var aiUnavailableReason: String? {
+        if #available(macOS 26.0, *) { return MeetingAI.availabilityMessage() }
+        return String(localized: "On-device AI needs macOS 26 or later.")
+    }
+
+    /// Record that meeting notes were skipped, so it surfaces in the panel
+    /// instead of the user finding an empty Summary tab and assuming ODE
+    /// broke. Also logged, since this is a support question waiting to happen.
+    func noteAIUnavailable(_ reason: String) {
+        aiNotesSkipped = reason
+        LiveEngine.diagnostic("[ai] meeting notes skipped — \(reason)")
+    }
     private var micActiveSince: Date?
 
     /// Mic engine is recreated when echo cancellation toggles (voice
@@ -987,6 +1008,9 @@ final class ODEController: ObservableObject {
         let mt = MeetingTranscriber(engine: engine, detectSpeakers: diarize)
         meetingTranscriber = mt
         transcribing = true
+        // Last meeting's "notes were skipped" notice doesn't belong on top of
+        // a new one — this meeting gets to succeed on its own terms.
+        aiNotesSkipped = nil
 
         // Meeting context: which app is calling, and what the calendar says
         // is happening right now (titles the transcript "Sprint Planning"
@@ -1095,18 +1119,26 @@ final class ODEController: ObservableObject {
             await MainActor.run { self.objectWillChange.send() }
             // Auto-summarize: the notes are ready when the user opens them,
             // no button needed. Additive — failure leaves the raw transcript.
-            if var t = saved, MeetingAI.isAvailable, MeetingNotesFormat.hasSubstance(t) {
-                do {
-                    let insights = try await MeetingAI.insights(for: t, userName: name)
-                    t.summary = insights.summary
-                    t.keyPoints = insights.keyPoints
-                    t.actionItems = insights.actionItems
-                    t.decisions = insights.decisions.isEmpty ? nil : insights.decisions
-                    t.openQuestions = insights.openQuestions.isEmpty ? nil : insights.openQuestions
-                    t.chapters = insights.chapters.isEmpty ? nil : insights.chapters
-                    TranscriptStore.shared.save(t)
-                } catch {
-                    NSLog("ODE: auto-summarize failed: \(error.localizedDescription)")
+            if var t = saved, MeetingNotesFormat.hasSubstance(t) {
+                if let reason = MeetingAI.availabilityMessage() {
+                    // Notes are a headline feature; skipping them in silence
+                    // reads as ODE being broken. Say why, once, where the
+                    // user is looking — and only for meetings that would
+                    // otherwise have been summarized.
+                    await MainActor.run { self.noteAIUnavailable(reason) }
+                } else {
+                    do {
+                        let insights = try await MeetingAI.insights(for: t, userName: name)
+                        t.summary = insights.summary
+                        t.keyPoints = insights.keyPoints
+                        t.actionItems = insights.actionItems
+                        t.decisions = insights.decisions.isEmpty ? nil : insights.decisions
+                        t.openQuestions = insights.openQuestions.isEmpty ? nil : insights.openQuestions
+                        t.chapters = insights.chapters.isEmpty ? nil : insights.chapters
+                        TranscriptStore.shared.save(t)
+                    } catch {
+                        NSLog("ODE: auto-summarize failed: \(error.localizedDescription)")
+                    }
                 }
             }
         }

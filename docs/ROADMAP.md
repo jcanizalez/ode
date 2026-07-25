@@ -65,22 +65,30 @@ Each release is a themed verse; infra rides along where it fits. The
 proactive features keep ODE's stance: on-device by default, cloud only by
 explicit per-question opt-in.
 
-### v0.13.0 — *An Ode to Presence* (proactive, part 1 — next)
+### *An Ode to Names* (knowledge — next)
+- **Named speakers** — name someone once and ODE remembers their voice:
+  later meetings label them "Igor" instead of "Speaker 2". Naming lives on
+  visible chips in the meeting header, and remembered voices are listed —
+  and forgettable — in Settings → Transcription. Samples are a few seconds
+  each and never leave the Mac.
+- **Apple Intelligence status** — meeting notes, titles, recap emails and
+  Ask all need it; when it is off ODE says so in Settings and after a
+  meeting, instead of quietly producing nothing.
+
+### *An Ode to Presence* (proactive, part 1)
 - **Name-mention alerts** — someone says your name → notification with the
   sentence + one-click into the live view (mentions plumbing already exists).
 - **Suggested answers** — a question lands on you → the live view drafts a
   reply from meeting context, on-device.
 
-### v0.14.0 — *An Ode to Counsel* (proactive, part 2)
+### *An Ode to Counsel* (proactive, part 2)
 - **Screen context** — ScreenCaptureKit + Apple Vision OCR (fully local) so
   Ask grounds answers in what's on screen, not just what was said.
 - **Claude escalation** — explicit "Ask with Claude" for hard questions:
   question + minimal context to the Claude API, per-question, clearly
   badged, never automatic. On-device remains the default.
 
-### v0.15.0 — *An Ode to Names* (knowledge)
-- **Named speakers** — voice enrollment via the diarizer's `enrollSpeaker`:
-  "Javier:" instead of "Speaker 1:".
+### *An Ode to Knowledge*
 - **Cross-meeting Q&A** — ask across the whole transcript store.
 - **Action-item export** — owners' tasks to Reminders / Markdown clipboard.
 - **Microsoft Graph calendar connector** (opt-in) for Outlook-only setups.
