@@ -709,32 +709,45 @@ struct MeetingsView: View {
     @ViewBuilder private func answerPanel() -> some View {
         if let asked = model.askedQuestion {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                // Top-aligned, not baseline-aligned: an image has no text
+                // baseline, so against a two-line question the controls got
+                // pushed down into the padding.
+                HStack(alignment: .top, spacing: 6) {
                     Text(asked)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
+                        .padding(.top, 4)
+                    Spacer(minLength: 8)
                     if let a = model.answer {
                         Button { model.copyAnswer(a) } label: {
                             Text(model.answerCopied ? "Copied" : "Copy")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(model.answerCopied
                                                  ? .green : Color.accentColor)
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .help("Copy this answer")
                     }
+                    // A 10pt glyph with no padding is a 10×10 click target.
+                    // Pad it out to a real one and give it a hit shape.
                     Button { model.clearAsk() } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Color.white.opacity(0.08)))
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("Close answer")
+                    .keyboardShortcut(.cancelAction)
+                    .help("Close answer (Esc)")
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
+                .padding(.top, 10)
                 .padding(.bottom, 9)
 
                 answerBody()
