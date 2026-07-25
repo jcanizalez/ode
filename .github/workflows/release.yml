@@ -27,6 +27,9 @@ jobs:
     # ODE uses macOS 26 SDK APIs (SpeechAnalyzer, FoundationModels), so the
     # runner needs Xcode 26.
     runs-on: macos-26
+    # macOS runners bill at 10x, and the default job limit is 6 hours. A
+    # stalled notarization would otherwise run up a bill unattended.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -54,6 +57,12 @@ jobs:
           if [ ! -f Resources/dpdfnet2_48khz_hr.onnx ]; then
             ./scripts/fetch-deps.sh
           fi
+
+      # Gate the release on the suite. CI runs on pushes to main, which is a
+      # different trigger from this tag — the two race, so a green CI run is
+      # not evidence that the code being notarized here passes.
+      - name: Test
+        run: swift test
 
       - name: Import signing certificates
         env:
@@ -103,7 +112,7 @@ jobs:
             --key authkey.p8 \
             --key-id "$APPSTORE_KEY_ID" \
             --issuer "$APPSTORE_ISSUER_ID" \
-            --wait
+            --wait --timeout 25m
           rm authkey.p8
           xcrun stapler staple "$PKG"
 
@@ -122,14 +131,23 @@ jobs:
           if gh release view "$tag" &>/dev/null; then
             echo "Release $tag exists — uploading artifact"
           else
+            # Created as a draft so the release is never public without its
+            # pkg attached, then published below once the upload lands.
             flags="--draft --title $tag --generate-notes"
             [ "$is_prerelease" = true ] && flags="$flags --prerelease"
             gh release create "$tag" $flags
           fi
           gh release upload "$tag" "$PKG" --clobber
 
-      # Runs AFTER the release exists so the feed never points at a missing
-      # download, and an appcast hiccup can't block publishing.
+          # Publish. A draft's assets 404 for everyone but the repo owner, so
+          # leaving this to a human meant the appcast below advertised a
+          # download nobody could fetch until someone clicked Publish. The
+          # release title can still be edited afterwards.
+          gh release edit "$tag" --draft=false
+          echo "Published $tag"
+
+      # Runs AFTER the release is PUBLISHED so the feed never points at a
+      # download that 404s, and an appcast hiccup can't block publishing.
       - name: Update appcast (auto-updates)
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
