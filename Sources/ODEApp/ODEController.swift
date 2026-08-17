@@ -218,10 +218,16 @@ final class ODEController: ObservableObject {
             DispatchQueue.main.async { self?.restartSpeakerPath() }
         }
 
+        // @Published fires objectWillChange on every ASSIGNMENT, not on every
+        // change, so writing the levels unconditionally invalidated the whole
+        // panel 60×/second for the life of the process — call or no call.
+        // Idle, both levels sit at exactly 0 and this tick now does nothing.
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.micLevel = self.micActive ? self.micEngine.currentLevel : 0
-            self.othersLevel = self.speakerActive ? self.speakerEngine.currentLevel : 0
+            let mic = self.micActive ? self.micEngine.currentLevel : 0
+            if mic != self.micLevel { self.micLevel = mic }
+            let others = self.speakerActive ? self.speakerEngine.currentLevel : 0
+            if others != self.othersLevel { self.othersLevel = others }
             self.updateMicSilenceWarning()
         }
     }

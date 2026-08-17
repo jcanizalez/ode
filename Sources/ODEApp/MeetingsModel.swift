@@ -215,12 +215,18 @@ final class MeetingsModel: ObservableObject {
 
     struct Sectioned { let title: String; let items: [Transcript] }
 
+    /// Shared across the grouping closure: a DateFormatter costs ~50–100 µs to
+    /// build, and this runs once per meeting on every body evaluation.
+    private static let sectionFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "MMM d"; return f
+    }()
+
     var groupedSections: [Sectioned] {
         let cal = Calendar.current
         let groups = Dictionary(grouping: filtered) { t -> String in
             if cal.isDateInToday(t.startedAt) { return "Today" }
             if cal.isDateInYesterday(t.startedAt) { return "Yesterday" }
-            let f = DateFormatter(); f.dateFormat = "MMM d"; return f.string(from: t.startedAt)
+            return Self.sectionFormatter.string(from: t.startedAt)
         }
         // Preserve chronological section order by the newest item in each group.
         return groups.map { Sectioned(title: $0.key, items: $0.value.sorted { $0.startedAt > $1.startedAt }) }
