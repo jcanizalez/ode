@@ -61,6 +61,10 @@ public struct Transcript: Codable, Identifiable {
     public var title: String
     public var startedAt: Date
     public var endedAt: Date
+    /// Always chronological — both initializers sort, and nothing afterwards
+    /// reorders (renames rewrite labels in place). Views walk this for every
+    /// row they draw, so re-sorting on each read made rendering a long
+    /// meeting quadratic; the order is established once instead.
     public var segments: [TranscriptSegment]
 
     // Optional metadata / cached AI output.
@@ -97,7 +101,7 @@ public struct Transcript: Codable, Identifiable {
         self.title = title
         self.startedAt = startedAt
         self.endedAt = endedAt
-        self.segments = segments
+        self.segments = Self.chronological(segments)
         self.sourceApp = sourceApp
         self.attendees = attendees
         self.starred = starred
@@ -129,7 +133,7 @@ public struct Transcript: Codable, Identifiable {
         title = try c.decode(String.self, forKey: .title)
         startedAt = try c.decode(Date.self, forKey: .startedAt)
         endedAt = try c.decode(Date.self, forKey: .endedAt)
-        segments = try c.decode([TranscriptSegment].self, forKey: .segments)
+        segments = Self.chronological(try c.decode([TranscriptSegment].self, forKey: .segments))
         sourceApp = try c.decodeIfPresent(String.self, forKey: .sourceApp)
         attendees = try c.decodeIfPresent([String].self, forKey: .attendees)
         starred = try c.decodeIfPresent(Bool.self, forKey: .starred) ?? false
@@ -150,12 +154,21 @@ public struct Transcript: Codable, Identifiable {
         }
     }
 
+    /// Merge the two streams by time. Ties keep their original order — Swift's
+    /// sort is not stable, so without the index tiebreak two segments sharing a
+    /// `start` (both sides talking over each other) could come back in either
+    /// order on each decode of the same file.
+    private static func chronological(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        segments.enumerated()
+            .sorted { ($0.element.start, $0.offset) < ($1.element.start, $1.offset) }
+            .map(\.element)
+    }
+
     public var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
 
-    /// Segments sorted chronologically (the two streams are merged by time).
-    public var ordered: [TranscriptSegment] {
-        segments.sorted { $0.start < $1.start }
-    }
+    /// Segments in chronological order — `segments` is kept sorted, so this is
+    /// just a name for the invariant.
+    public var ordered: [TranscriptSegment] { segments }
 
     /// Distinct speakers in first-appearance order.
     public var speakers: [String] {

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CSherpa
 
 /// Locates the bundled DPDFNet model in both app-bundle and dev/CLI contexts.
@@ -41,8 +42,16 @@ enum ModelLocator {
 /// DPDFNet runs at 48 kHz full-band and preserves speech naturalness far better
 /// than RNNoise while removing substantially more background noise.
 public final class Denoiser {
-    private let offline: OpaquePointer?
-    private let online: OpaquePointer?
+    /// The two inference sessions are built ON FIRST USE, not at init: each one
+    /// loads its own copy of the 10.6 MB model into an ONNX Runtime arena (and
+    /// the offline one spins up a 2-thread pool), and every owner uses exactly
+    /// one of them — LiveEngine only streams, the CLI and the A/B tester only
+    /// process whole buffers. Building both eagerly meant the two engines
+    /// ODEController constructs at launch held four sessions where two would
+    /// do, before a single call had started.
+    private var lock = os_unfair_lock()
+    private var _offline: OpaquePointer?
+    private var _online: OpaquePointer?
     private let modelPathC: [CChar]
 
     /// Frame granularity hint (kept for API compatibility with callers).
@@ -55,32 +64,54 @@ public final class Denoiser {
                        + "app bundle. Set ODE_MODEL_PATH to override.")
         }
         modelPathC = path.cString(using: .utf8) ?? []
+    }
 
-        offline = modelPathC.withUnsafeBufferPointer { buf in
-            var cfg = SherpaOnnxOfflineSpeechDenoiserConfig()
-            cfg.model.dpdfnet.model = buf.baseAddress
-            cfg.model.num_threads = 2
-            cfg.model.provider = ("cpu" as NSString).utf8String
-            return SherpaOnnxCreateOfflineSpeechDenoiser(&cfg)
+    /// Whole-buffer session, created on first use.
+    private func offlineSession() -> OpaquePointer? {
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        if _offline == nil {
+            _offline = modelPathC.withUnsafeBufferPointer { buf in
+                var cfg = SherpaOnnxOfflineSpeechDenoiserConfig()
+                cfg.model.dpdfnet.model = buf.baseAddress
+                cfg.model.num_threads = 2
+                cfg.model.provider = ("cpu" as NSString).utf8String
+                return SherpaOnnxCreateOfflineSpeechDenoiser(&cfg)
+            }
         }
+        return _offline
+    }
 
-        online = modelPathC.withUnsafeBufferPointer { buf in
-            var cfg = SherpaOnnxOnlineSpeechDenoiserConfig()
-            cfg.model.dpdfnet.model = buf.baseAddress
-            cfg.model.num_threads = 1
-            cfg.model.provider = ("cpu" as NSString).utf8String
-            return SherpaOnnxCreateOnlineSpeechDenoiser(&cfg)
+    /// Streaming session, created on first use.
+    private func onlineSession() -> OpaquePointer? {
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        if _online == nil {
+            _online = modelPathC.withUnsafeBufferPointer { buf in
+                var cfg = SherpaOnnxOnlineSpeechDenoiserConfig()
+                cfg.model.dpdfnet.model = buf.baseAddress
+                cfg.model.num_threads = 1
+                cfg.model.provider = ("cpu" as NSString).utf8String
+                return SherpaOnnxCreateOnlineSpeechDenoiser(&cfg)
+            }
         }
+        return _online
+    }
+
+    /// The streaming session ONLY if it already exists — reset/flush must not
+    /// build one just to tear it down (LiveEngine.teardown calls both on every
+    /// session end, including sessions that never denoised anything).
+    private func existingOnlineSession() -> OpaquePointer? {
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        return _online
     }
 
     deinit {
-        if let o = offline { SherpaOnnxDestroyOfflineSpeechDenoiser(o) }
-        if let o = online { SherpaOnnxDestroyOnlineSpeechDenoiser(o) }
+        if let o = _offline { SherpaOnnxDestroyOfflineSpeechDenoiser(o) }
+        if let o = _online { SherpaOnnxDestroyOnlineSpeechDenoiser(o) }
     }
 
     /// Offline denoise of a complete 48 kHz mono buffer ([-1, 1]).
     public func process(_ samples: [Float]) -> [Float] {
-        guard let offline, !samples.isEmpty else { return samples }
+        guard !samples.isEmpty, let offline = offlineSession() else { return samples }
         let result = samples.withUnsafeBufferPointer { buf in
             SherpaOnnxOfflineSpeechDenoiserRun(offline, buf.baseAddress, Int32(buf.count),
                                                Int32(AudioIO.sampleRate))
@@ -91,7 +122,7 @@ public final class Denoiser {
     /// Streaming denoise: feed arbitrary-length 48 kHz chunks across calls;
     /// returns whatever denoised output is ready this call.
     public func processStreaming(_ chunk: [Float]) -> [Float] {
-        guard let online, !chunk.isEmpty else { return [] }
+        guard !chunk.isEmpty, let online = onlineSession() else { return [] }
         let result = chunk.withUnsafeBufferPointer { buf in
             SherpaOnnxOnlineSpeechDenoiserRun(online, buf.baseAddress, Int32(buf.count),
                                               Int32(AudioIO.sampleRate))
@@ -101,14 +132,14 @@ public final class Denoiser {
 
     /// Flush any buffered streaming audio (call when stopping a live session).
     public func flushStreaming() -> [Float] {
-        guard let online else { return [] }
+        guard let online = existingOnlineSession() else { return [] }
         return Self.collect(SherpaOnnxOnlineSpeechDenoiserFlush(online))
     }
 
     /// Reset the streaming denoiser's internal state so a new session starts
     /// clean (call between calls to avoid carrying stale state).
     public func resetStreaming() {
-        guard let online else { return }
+        guard let online = existingOnlineSession() else { return }
         SherpaOnnxOnlineSpeechDenoiserReset(online)
     }
 

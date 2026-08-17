@@ -275,6 +275,8 @@ struct MeetingsView: View {
 
     private func row(_ t: Transcript) -> some View {
         let selected = model.selectedID == t.id && !model.viewingLive
+        let speakers = t.speakers
+        let pal = palette(t)
         return Button { model.selectedID = t.id; model.viewingLive = false } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -287,7 +289,7 @@ struct MeetingsView: View {
                 Text(t.summary ?? previewLine(t))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 HStack(spacing: 6) {
-                    ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 18, palette: palette(t)) }
+                    ForEach(speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 18, palette: pal) }
                     Text(durationText(t.duration))
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.accentColor)
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -362,7 +364,9 @@ struct MeetingsView: View {
     /// Q&A, and an ask bar answering from the transcript-so-far. Catch up on
     /// what you missed without waiting for the meeting to end.
     private func liveDetail(_ t: Transcript) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let speakers = t.speakers
+        let pal = palette(t)
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
@@ -378,7 +382,7 @@ struct MeetingsView: View {
                         Text("Started \(timeText(t.startedAt))").foregroundStyle(.white.opacity(0.5))
                         Text(durationText(t.duration)).foregroundStyle(.white.opacity(0.5))
                         HStack(spacing: -5) {
-                            ForEach(t.speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 20, palette: palette(t)) }
+                            ForEach(speakers.prefix(4), id: \.self) { SpeakerAvatar(speaker: $0, size: 20, palette: pal) }
                         }
                     }
                     .font(.system(size: 12))
@@ -412,7 +416,8 @@ struct MeetingsView: View {
     // (Saved exchanges render via QACard, below.)
 
     private func detailHeader(_ t: Transcript) -> some View {
-        HStack(alignment: .top) {
+        let speakerCount = t.speakers.count
+        return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Circle().fill(Color.accentColor).frame(width: 8, height: 8)
@@ -421,7 +426,7 @@ struct MeetingsView: View {
                 HStack(spacing: 10) {
                     Text(dateText(t.startedAt)).foregroundStyle(.white.opacity(0.5))
                     Text(durationText(t.duration)).foregroundStyle(.white.opacity(0.5))
-                    Text("\(t.speakers.count) \(t.speakers.count == 1 ? "person" : "people")")
+                    Text("\(speakerCount) \(speakerCount == 1 ? "person" : "people")")
                         .foregroundStyle(.white.opacity(0.5))
                 }
                 .font(.system(size: 12))
@@ -507,6 +512,7 @@ struct MeetingsView: View {
     // MARK: - Tabs
 
     @ViewBuilder private func summaryTab(_ t: Transcript) -> some View {
+        let pal = palette(t)
         VStack(alignment: .leading, spacing: 22) {
             if let err = model.aiError {
                 infoBox(err, color: .orange)
@@ -575,7 +581,7 @@ struct MeetingsView: View {
 
             section("TALK TIME") {
                 ForEach(t.talkTime, id: \.speaker) { entry in
-                    talkTimeRow(entry.speaker, entry.fraction, palette(t))
+                    talkTimeRow(entry.speaker, entry.fraction, pal)
                         .contextMenu { renameMenu(t, speaker: entry.speaker) }
                 }
                 interactivityRow(t)
@@ -647,16 +653,20 @@ struct MeetingsView: View {
     }
 
     @ViewBuilder private func transcriptTab(_ t: Transcript) -> some View {
+        // Built ONCE for the whole tab. Read per row (two reads per segment, on
+        // a meeting that can run to hundreds of segments) this walked every
+        // segment each time, which made drawing the transcript quadratic.
+        let pal = palette(t)
         ScrollViewReader { proxy in
             VStack(alignment: .leading, spacing: 18) {
                 translateMenu
                 ForEach(t.ordered) { seg in
                     HStack(alignment: .top, spacing: 11) {
-                        SpeakerAvatar(speaker: seg.speaker, size: 28, palette: palette(t))
+                        SpeakerAvatar(speaker: seg.speaker, size: 28, palette: pal)
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
                                 Text(seg.speaker).font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(palette(t).color(seg.speaker))
+                                    .foregroundStyle(pal.color(seg.speaker))
                                 Text(timestamp(seg.start)).font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(.white.opacity(0.4))
                             }
@@ -695,6 +705,7 @@ struct MeetingsView: View {
     }
 
     @ViewBuilder private func actionsTab(_ t: Transcript) -> some View {
+        let pal = palette(t)
         VStack(alignment: .leading, spacing: 14) {
             if let items = t.actionItems, !items.isEmpty {
                 ForEach(items) { item in
@@ -705,7 +716,7 @@ struct MeetingsView: View {
                         Spacer(minLength: 0)
                         if let owner = item.owner {
                             HStack(spacing: 5) {
-                                SpeakerAvatar(speaker: owner, size: 16, palette: palette(t))
+                                SpeakerAvatar(speaker: owner, size: 16, palette: pal)
                                 Text(owner).font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.7))
                             }
@@ -905,6 +916,7 @@ struct MeetingsView: View {
     /// Where other speakers said your name, with jump links.
     @ViewBuilder private func mentionsSection(_ t: Transcript) -> some View {
         let hits = t.mentions(of: model.userFirstName)
+        let pal = palette(t)
         if !hits.isEmpty {
             section("MENTIONS OF YOU") {
                 ForEach(hits) { seg in
@@ -918,7 +930,7 @@ struct MeetingsView: View {
                                 .foregroundStyle(Color.accentColor)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(seg.speaker).font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(palette(t).color(seg.speaker))
+                                    .foregroundStyle(pal.color(seg.speaker))
                                 Text(seg.text).font(.system(size: 13))
                                     .foregroundStyle(.white.opacity(0.85))
                                     .lineLimit(2)
@@ -940,6 +952,11 @@ struct MeetingsView: View {
 
     @ViewBuilder private func analyticsTab(_ t: Transcript) -> some View {
         let a = model.analytics(for: t)
+        let pal = palette(t)
+        // Both were previously re-derived inside the per-speaker loop, and each
+        // one walks the whole transcript.
+        let shares = Dictionary(t.talkTime.map { ($0.speaker, $0.fraction) },
+                                uniquingKeysWith: { first, _ in first })
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 12) {
                 statCard("Duration", durationText(t.duration))
@@ -948,7 +965,7 @@ struct MeetingsView: View {
             }
             section("BY SPEAKER") {
                 ForEach(a.perSpeaker, id: \.speaker) { s in
-                    speakerStatsCard(s, in: t)
+                    speakerStatsCard(s, in: t, share: shares[s.speaker] ?? 0, palette: pal)
                 }
             }
             Text("Counted on-device from the transcript. Filler words are a heuristic — a trend to watch, not a verdict.")
@@ -978,13 +995,14 @@ struct MeetingsView: View {
     }
 
     @ViewBuilder private func speakerStatsCard(_ s: SpeakingAnalytics.SpeakerStats,
-                                               in t: Transcript) -> some View {
-        let share = t.talkTime.first { $0.speaker == s.speaker }?.fraction ?? 0
+                                               in t: Transcript,
+                                               share: Double,
+                                               palette pal: SpeakerPalette) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                SpeakerAvatar(speaker: s.speaker, size: 24, palette: palette(t))
+                SpeakerAvatar(speaker: s.speaker, size: 24, palette: pal)
                 Text(s.speaker).font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(palette(t).color(s.speaker))
+                    .foregroundStyle(pal.color(s.speaker))
                 Spacer()
                 Text(talkShareText(share))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
@@ -1041,23 +1059,25 @@ struct MeetingsView: View {
     /// header's buttons there was no room, and SwiftUI resolved that by
     /// wrapping each name one letter per line.
     private func peopleRow(_ t: Transcript) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let pal = palette(t)
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(t.speakers, id: \.self) { speakerChip(t, speaker: $0) }
+                ForEach(t.speakers, id: \.self) { speakerChip(t, speaker: $0, palette: pal) }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
         }
     }
 
-    private func speakerChip(_ t: Transcript, speaker: String) -> some View {
+    private func speakerChip(_ t: Transcript, speaker: String,
+                             palette pal: SpeakerPalette) -> some View {
         let editable = speaker != "You"
         let remembered = editable && model.isRemembered(speaker)
         return Button {
             beginRename(speaker, in: t)
         } label: {
             HStack(spacing: 5) {
-                SpeakerAvatar(speaker: speaker, size: 18, palette: palette(t))
+                SpeakerAvatar(speaker: speaker, size: 18, palette: pal)
                 Text(speaker).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.85))
                     // Never wrap: a squeezed chip must clip or scroll, not

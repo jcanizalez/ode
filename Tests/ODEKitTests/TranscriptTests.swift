@@ -23,6 +23,56 @@ final class TranscriptTests: XCTestCase {
                        ["Buenos días", "Hola a todos", "Seguimos mañana"])
     }
 
+    /// `segments` is the sorted storage, not just what `ordered` returns: the
+    /// Meetings views read it once per body and index it per row, so re-sorting
+    /// on every read made drawing a long meeting quadratic.
+    func testInitStoresSegmentsChronologically() {
+        XCTAssertEqual(sample().segments.map(\.text),
+                       ["Buenos días", "Hola a todos", "Seguimos mañana"])
+    }
+
+    func testDecodeStoresSegmentsChronologically() throws {
+        let unordered = """
+        {
+          "id": "0CC83458-0000-0000-0000-000000000000",
+          "title": "Standup",
+          "startedAt": "2026-06-18T09:02:00Z",
+          "endedAt": "2026-06-18T09:32:00Z",
+          "segments": [
+            {"id": "33333333-0000-0000-0000-000000000000",
+             "speaker": "You", "start": 50, "end": 70, "text": "tercero"},
+            {"id": "11111111-0000-0000-0000-000000000000",
+             "speaker": "You", "start": 0, "end": 10, "text": "primero"},
+            {"id": "22222222-0000-0000-0000-000000000000",
+             "speaker": "Others", "start": 30, "end": 40, "text": "segundo"}
+          ],
+          "chat": []
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let t = try decoder.decode(Transcript.self, from: unordered)
+        XCTAssertEqual(t.segments.map(\.text), ["primero", "segundo", "tercero"])
+    }
+
+    /// Segments sharing a `start` (both sides talking over each other) keep the
+    /// order they arrived in. Swift's sort is not stable, so without the
+    /// tiebreak two decodes of the same file could disagree.
+    func testEqualStartsKeepArrivalOrder() {
+        let t = Transcript(title: "Overlap", startedAt: Date(), endedAt: Date(),
+                           segments: [seg("You", 10, 12, "a"),
+                                      seg("Others", 10, 12, "b"),
+                                      seg("You", 10, 12, "c")])
+        XCTAssertEqual(t.segments.map(\.text), ["a", "b", "c"])
+    }
+
+    func testRenameSpeakerPreservesOrder() {
+        var t = sample()
+        XCTAssertTrue(t.renameSpeaker("Others", to: "Igor"))
+        XCTAssertEqual(t.segments.map(\.text),
+                       ["Buenos días", "Hola a todos", "Seguimos mañana"])
+    }
+
     func testSpeakersFirstAppearanceOrder() {
         XCTAssertEqual(sample().speakers, ["You", "Others"])
     }
